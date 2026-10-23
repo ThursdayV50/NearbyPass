@@ -95,9 +95,116 @@ final class Updater {
         }
     }
 
-    /// 不查 GitHub API（未认证的 60 次/小时太容易被限流），
-    /// 直接跟随 releases/latest 的 302 跳转拿到 tag，再拼附件地址。
+    /// 两条路：先问 API（准确、立即反映新发布），失败（限流/网络）再退回
+    /// releases/latest 的 302 跳转。后者不走 API 配额，但 CDN 可能滞后几十分钟。
     private func fetchLatest() async throws -> Release {
+        do {
+            return try await apiRelease()
+        } catch {
+            let apiError = error.localizedDescription
+            Log.warn("API 查询失败（\(apiError)），改用页面跳转方式")
+            do {
+                return try await atomRelease()
+            } catch {
+                let atomError = error.localizedDescription
+                Log.warn("Atom 查询也失败（\(atomError)），最后试页面跳转")
+                do {
+                    return try await redirectRelease()
+                } catch {
+                    throw NSError(domain: "NearbyPass", code: 9,
+                                  userInfo: [NSLocalizedDescriptionKey:
+                                    "查询失败：\(apiError)；\(atomError)；\(error.localizedDescription)"])
+                }
+            }
+        }
+    }
+
+    private func apiRelease() async throws -> Release {
+        var req = URLRequest(url: URL(string: "https://api.github.com/repos/\(repo)/releases/latest")!)
+        req.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
+        req.setValue("NearbyPass/\(Self.currentVersion)", forHTTPHeaderField: "User-Agent")
+        req.timeoutInterval = 15
+
+        let (data, resp) = try await URLSession.shared.data(for: req)
+        let code = (resp as? HTTPURLResponse)?.statusCode ?? -1
+        guard code == 200 else {
+            throw NSError(domain: "NearbyPass", code: 1,
+                          userInfo: [NSLocalizedDescriptionKey: "API 返回 \(code)"])
+        }
+        guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            throw NSError(domain: "NearbyPass", code: 2,
+                          userInfo: [NSLocalizedDescriptionKey: "返回内容无法解析"])
+        }
+        let tag = (json["tag_name"] as? String) ?? ""
+        var ver = tag
+        if ver.hasPrefix("v") { ver.removeFirst() }
+        guard !ver.isEmpty else {
+            throw NSError(domain: "NearbyPass", code: 2,
+                          userInfo: [NSLocalizedDescriptionKey: "版本号为空"])
+        }
+        let page = URL(string: (json["html_url"] as? String) ?? "https://github.com/\(repo)")!
+
+        // 附件名以 API 给的为准；找不到 .dmg 就按约定拼
+        let assets = (json["assets"] as? [[String: Any]]) ?? []
+        let dmgURL = assets.compactMap { $0["browser_download_url"] as? String }
+            .first { $0.hasSuffix(".dmg") }
+            .flatMap(URL.init(string:))
+            ?? URL(string: "https://github.com/\(repo)/releases/download/\(tag)/NearbyPass-\(ver).dmg")!
+
+        return Release(version: ver, dmg: dmgURL, pageURL: page,
+                       notes: (json["notes"] as? String) ?? (json["body"] as? String) ?? "")
+    }
+
+    /// releases.atom 不走 API 配额，而且发布后立刻可见，是限流时的主力后备
+    private func atomRelease() async throws -> Release {
+        var req = URLRequest(url: URL(string: "https://github.com/\(repo)/releases.atom")!)
+        req.setValue("NearbyPass/\(Self.currentVersion)", forHTTPHeaderField: "User-Agent")
+        req.timeoutInterval = 15
+
+        let (data, resp) = try await URLSession.shared.data(for: req)
+        guard (resp as? HTTPURLResponse)?.statusCode == 200,
+              let xml = String(data: data, encoding: .utf8),
+              let entry = xml.range(of: "<entry>"),
+              let rest = xml[entry.lowerBound...].range(of: "</entry>") else {
+            throw NSError(domain: "NearbyPass", code: 5,
+                          userInfo: [NSLocalizedDescriptionKey: "Atom 内容异常"])
+        }
+        let block = String(xml[entry.lowerBound..<rest.upperBound])
+
+        guard let hrefRange = block.range(of: "/releases/tag/") else {
+            throw NSError(domain: "NearbyPass", code: 6,
+                          userInfo: [NSLocalizedDescriptionKey: "Atom 里没有版本链接"])
+        }
+        let tail = block[hrefRange.upperBound...]
+        let tag = String(tail.prefix(while: { $0 != "\"" && $0 != "<" }))
+        var ver = tag
+        if ver.hasPrefix("v") { ver.removeFirst() }
+        guard !ver.isEmpty else {
+            throw NSError(domain: "NearbyPass", code: 6,
+                          userInfo: [NSLocalizedDescriptionKey: "版本号为空"])
+        }
+        let dmg = URL(string: "https://github.com/\(repo)/releases/download/\(tag)/NearbyPass-\(ver).dmg")!
+        let page = URL(string: "https://github.com/\(repo)/releases/tag/\(tag)")!
+        return Release(version: ver, dmg: dmg, pageURL: page, notes: Self.plainText(block))
+    }
+
+    private static func plainText(_ html: String) -> String {
+        guard let c = html.range(of: "<content"),
+              let gt = html[c.upperBound...].firstIndex(of: ">"),
+              let end = html.range(of: "</content>") else { return "" }
+        var t = String(html[html.index(after: gt)..<end.lowerBound])
+        t = t.replacingOccurrences(of: "&lt;", with: "<")
+             .replacingOccurrences(of: "&gt;", with: ">")
+             .replacingOccurrences(of: "&amp;", with: "&")
+             .replacingOccurrences(of: "&quot;", with: "\"")
+        // 去掉所有标签
+        while let a = t.firstIndex(of: "<"), let b = t[a...].firstIndex(of: ">") {
+            t.removeSubrange(a...b)
+        }
+        return t.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private func redirectRelease() async throws -> Release {
         var req = URLRequest(url: URL(string: "https://github.com/\(repo)/releases/latest")!)
         req.setValue("NearbyPass/\(Self.currentVersion)", forHTTPHeaderField: "User-Agent")
         req.timeoutInterval = 15
@@ -105,7 +212,7 @@ final class Updater {
         let (_, resp) = try await URLSession.shared.data(for: req)
         guard let finalURL = resp.url?.absoluteString,
               let range = finalURL.range(of: "/releases/tag/") else {
-            throw NSError(domain: "NearbyPass", code: 1,
+            throw NSError(domain: "NearbyPass", code: 3,
                           userInfo: [NSLocalizedDescriptionKey: "无法解析最新版本地址"])
         }
         let tag = String(finalURL[range.upperBound...])
@@ -113,23 +220,11 @@ final class Updater {
         var ver = tag
         if ver.hasPrefix("v") { ver.removeFirst() }
         guard !ver.isEmpty else {
-            throw NSError(domain: "NearbyPass", code: 2,
+            throw NSError(domain: "NearbyPass", code: 4,
                           userInfo: [NSLocalizedDescriptionKey: "版本号为空"])
         }
-
         let dmg = URL(string: "https://github.com/\(repo)/releases/download/\(tag)/NearbyPass-\(ver).dmg")!
         let page = URL(string: "https://github.com/\(repo)/releases/tag/\(tag)")!
-
-        // 确认附件真的存在，避免拿到 404 页面
-        var head = URLRequest(url: dmg)
-        head.httpMethod = "HEAD"
-        head.setValue("NearbyPass/\(Self.currentVersion)", forHTTPHeaderField: "User-Agent")
-        let (_, hresp) = try await URLSession.shared.data(for: head)
-        let code = (hresp as? HTTPURLResponse)?.statusCode ?? -1
-        guard code == 200 else {
-            throw NSError(domain: "NearbyPass", code: 3,
-                          userInfo: [NSLocalizedDescriptionKey: "该版本没有 NearbyPass-\(ver).dmg 附件（HTTP \(code)）"])
-        }
         return Release(version: ver, dmg: dmg, pageURL: page, notes: "")
     }
 
@@ -338,6 +433,20 @@ final class Updater {
         try p.run()
     }
 
+    /// 调试：`--force-install` 忽略版本比较，强制走一遍下载→验签→替换→重启
+    func debugForceInstall() {
+        Task {
+            do {
+                let r = try await fetchLatest()
+                print("强制安装 \(r.version)  dmg=\(r.dmg.lastPathComponent)")
+                downloadAndInstall(r)
+            } catch {
+                print("失败: \(error.localizedDescription)")
+                exit(1)
+            }
+        }
+    }
+
     /// 调试：把安装脚本写出来并做语法检查
     func debugInstallScript() {
         let dmg = URL(fileURLWithPath: "/tmp/fake.dmg")
@@ -368,12 +477,13 @@ final class Updater {
     }
 
     /// 供命令行调试：`NearbyPass --check-update`
-    func debugCheck() async {
-        print("当前版本: \(Self.currentVersion)")
+    func debugCheck(simulateVersion: String? = nil) async {
+        let cur = simulateVersion ?? Self.currentVersion
+        print("当前版本: \(cur)")
         do {
             let r = try await fetchLatest()
             print("最新版本: \(r.version)  dmg=\(r.dmg.lastPathComponent)")
-            print(Self.isNewer(r.version, than: Self.currentVersion) ? "→ 有更新" : "→ 已是最新")
+            print(Self.isNewer(r.version, than: cur) ? "→ 有更新" : "→ 已是最新")
         } catch {
             print("失败: \(error.localizedDescription)")
         }

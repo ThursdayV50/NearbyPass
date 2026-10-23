@@ -25,6 +25,7 @@ final class Settings {
         static let paused               = "paused"
         static let hasCompletedOnboard  = "hasCompletedOnboard"
         static let deviceAliases        = "deviceAliases"
+        static let learnedNames         = "learnedNames"
     }
 
     private init() {
@@ -121,6 +122,22 @@ final class Settings {
     }
 
     /// 用户给设备起的名字（key = CBPeripheral UUID）
+    /// 设备自己广播过的好名字（安卓会周期性轮换成随机串，所以记下来，别丢）
+    var learnedNames: [String: String] {
+        get { (UserDefaults.standard.dictionary(forKey: K.learnedNames) as? [String: String]) ?? [:] }
+        set { UserDefaults.standard.set(newValue, forKey: K.learnedNames) }
+    }
+
+    func learnedName(_ deviceID: String) -> String? { learnedNames[deviceID] }
+
+    func setLearnedName(_ deviceID: String, _ name: String) {
+        guard !name.isEmpty else { return }
+        var d = learnedNames
+        if d[deviceID] == name { return }
+        d[deviceID] = name
+        learnedNames = d
+    }
+
     var deviceAliases: [String: String] {
         get { d.dictionary(forKey: K.deviceAliases) as? [String: String] ?? [:] }
         set { d.set(newValue, forKey: K.deviceAliases) }

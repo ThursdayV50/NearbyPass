@@ -121,6 +121,7 @@ final class PresenceMonitor: NSObject {
         // 比 GATT 的 "iPhone18,3 · Apple Inc." 更贴近用户认知，所以排在前面。
         if let a = Settings.shared.alias(id) { return a }
         if let d = devices[id], !Self.looksRandom(d.name) { return d.name }
+        if let l = Settings.shared.learnedName(id) { return l }
         if let g = gattNames[id] { return g }
         return "未知设备 · " + String(id.prefix(8))
     }
@@ -129,6 +130,7 @@ final class PresenceMonitor: NSObject {
     func isUnknownName(_ id: String) -> Bool {
         if Settings.shared.alias(id) != nil { return false }
         if let d = devices[id], !Self.looksRandom(d.name) { return false }
+        if Settings.shared.learnedName(id) != nil { return false }
         if gattNames[id] != nil { return false }
         return true
     }
@@ -384,7 +386,10 @@ extension PresenceMonitor: CBCentralManagerDelegate {
             existing.emaRSSI = alpha * Double(rssi) + (1 - alpha) * existing.emaRSSI
             existing.lastSeen = now
             // 设备改名后广播名会变，只要新名字不是随机串就跟着更新
-            if name != "未知设备", !Self.looksRandom(name) { existing.name = name }
+            if name != "未知设备", !Self.looksRandom(name) {
+                existing.name = name
+                Settings.shared.setLearnedName(id, name)
+            }
             devices[id] = existing
         } else {
             devices[id] = DeviceReading(

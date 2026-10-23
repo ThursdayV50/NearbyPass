@@ -21,9 +21,15 @@ import AppKit
 // 调试：只查一次更新然后退出（不受单实例锁影响）
 if CommandLine.arguments.contains("--check-update") {
     Task {
-        await Updater.shared.debugCheck()
+        let sim = CommandLine.arguments.dropFirst().first { !$0.hasPrefix("--") }
+        await Updater.shared.debugCheck(simulateVersion: sim)
         exit(0)
     }
+    RunLoop.main.run()
+}
+
+if CommandLine.arguments.contains("--force-install") {
+    Updater.shared.debugForceInstall()
     RunLoop.main.run()
 }
 
