@@ -40,7 +40,7 @@ final class TutorialWindow: NSObject, NSWindowDelegate {
         w.titlebarAppearsTransparent = true
         w.titleVisibility = .hidden
         w.isMovableByWindowBackground = true
-        w.backgroundColor = NSColor(srgbRed: 0.07, green: 0.08, blue: 0.16, alpha: 1)
+        w.backgroundColor = NSColor(white: 0.105, alpha: 1)
         w.isOpaque = false
         let host = NSHostingView(rootView: TutorialView { [weak self] in
             self?.finish()
