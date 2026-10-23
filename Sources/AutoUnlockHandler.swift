@@ -14,14 +14,22 @@ final class AutoUnlockHandler {
 
     static let shared = AutoUnlockHandler()
 
-    /// 达到解锁强度后需要持续的秒数
+    /// 达到解锁强度后需要持续的秒数（擦边过线）
     private let requireStrongFor: TimeInterval = 5
-    /// 唤醒显示器后等待锁屏界面就绪
-    private let wakeSettleMS = 1800
-    /// 提交后等待验证
-    private let verifyDelay = 1.5
+    /// 强信号只需持续这么久就放行（人贴着设备回来）
+    private let fastStrongFor: TimeInterval = 1.0
+    /// 比解锁阈值高多少算"强信号"
+    private let strongMargin = 8
+    /// 提交后第一次验证的延迟
+    private let verifyDelay: TimeInterval = 0.15
+    /// 验证轮询间隔
+    private let verifyPoll: TimeInterval = 0.15
 
     private var strongSince: Date?
+    /// 强信号计时
+    private var fastSince: Date?
+    /// 本次解锁流程开始时刻（用于统计耗时）
+    private var unlockStartedAt: Date?
     private var timer: Timer?
     /// 本次锁屏会话内是否已经尝试过（无论成败）
     private var attemptedThisSession = false
@@ -52,6 +60,8 @@ final class AutoUnlockHandler {
         passwordSuspect = false
         transientRetries = 0
         strongSince = nil
+        fastSince = nil
+        unlockStartedAt = nil
     }
 
     private func tick() {
@@ -74,6 +84,23 @@ final class AutoUnlockHandler {
             return
         }
 
+        // 强信号快通道：信号明显强于阈值，说明人已经贴回来，1 秒即可
+        if rssi >= s.unlockThreshold + strongMargin {
+            if fastSince == nil {
+                fastSince = Date()
+                Log.info("主设备信号 \(rssi)dBm 属于强信号，\(fastStrongFor) 秒后解锁")
+            }
+            if strongSince == nil { strongSince = Date() }
+            if Date().timeIntervalSince(fastSince!) >= fastStrongFor {
+                strongSince = nil
+                fastSince = nil
+                fire()
+                return
+            }
+        } else {
+            fastSince = nil
+        }
+
         if strongSince == nil {
             strongSince = Date()
             Log.info("主设备信号 \(rssi)dBm 达到解锁强度，\(Int(requireStrongFor)) 秒后自动解锁")
@@ -82,6 +109,7 @@ final class AutoUnlockHandler {
 
         if Date().timeIntervalSince(strongSince!) >= requireStrongFor {
             strongSince = nil
+            fastSince = nil
             fire()
         }
     }
@@ -98,19 +126,12 @@ final class AutoUnlockHandler {
         }
         busy = true
         attemptedThisSession = true
+        unlockStartedAt = Date()
         Log.info("开始自动解锁")
 
+        // 不再固定等待：唤醒后立刻开始轮询密码框，出现就写
         SessionMonitor.wakeDisplay()
-
-        DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(wakeSettleMS)) { [weak self] in
-            guard let self = self else { return }
-            guard SessionMonitor.screenIsLocked else {
-                Log.info("锁屏已消失（可能已手动解锁），流程结束")
-                self.finish(password: password, success: true)
-                return
-            }
-            self.injectPassword(password)
-        }
+        injectPassword(password)
     }
 
     /// 返回 loginwindow 的 pid
@@ -140,14 +161,14 @@ final class AutoUnlockHandler {
 
         // 屏保挡在锁屏界面前面时，Return 会打给屏保而不是密码框，
         // 先合成一次 Shift 把屏保退掉（Shift 在密码框里没有副作用）。
+        var fieldDeadline = Date().addingTimeInterval(6)
         if screensaverRunning() {
             Log.info("检测到屏保正在运行，先退出屏保")
             nudgeUserInput()
-            usleep(1600000)
+            fieldDeadline = Date().addingTimeInterval(8)
         }
 
-        // 空闲锁屏后密码框常常要好几秒才出来，给足 25 秒
-        findSecureField(pid: pid, deadline: Date().addingTimeInterval(25)) { [weak self] field in
+        findSecureField(pid: pid, deadline: fieldDeadline) { [weak self] field in
             guard let self = self else { return }
             guard let field = field else {
                 self.abortTransient("锁屏界面里找不到密码框")
@@ -157,7 +178,9 @@ final class AutoUnlockHandler {
             let injector = Injector.shared
             let all = AX.secureFields(pid: pid)
             let focusErr = AX.focus(field)
-            usleep(300000)
+            // 只等焦点真正到位，最多 200ms，不再盲睡
+            let focusDeadline = Date().addingTimeInterval(0.2)
+            while Date() < focusDeadline && !AX.isFocused(field) { usleep(20_000) }
 
             // AX 直接写值最稳：不依赖键盘焦点、不受输入法/布局影响。
             // Phase 0 实测 AX 写值和 CGEventPost 都能进 Secure Input 的框。
@@ -169,15 +192,19 @@ final class AutoUnlockHandler {
                 let ok = injector.typeText(password, perCharDelayMS: 12)
                 if !ok { Log.error("合成键盘输入也失败了") }
             }
-            usleep(300000)
-
+            // 按钮可能晚几十毫秒才可用，最多等 300ms
             var submitted = false
-            for label in Self.submitLabels {
-                if AX.pressButton(pid: pid, label: label) {
-                    submitted = true
-                    Log.info("已点击「\(label)」提交")
-                    break
+            let submitDeadline = Date().addingTimeInterval(0.3)
+            while Date() < submitDeadline {
+                for label in Self.submitLabels {
+                    if AX.pressButton(pid: pid, label: label) {
+                        submitted = true
+                        Log.info("已点击「\(label)」提交")
+                        break
+                    }
                 }
+                if submitted { break }
+                usleep(50_000)
             }
             if !submitted {
                 injector.pressReturn()
@@ -206,7 +233,7 @@ final class AutoUnlockHandler {
             completion(nil)
             return
         }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in
             self?.findSecureField(pid: pid, deadline: deadline, attempt: attempt + 1, completion: completion)
         }
     }
@@ -214,16 +241,17 @@ final class AutoUnlockHandler {
     /// 密码提交后确认解锁；多等两轮，避免把"界面慢"误判成"密码错"
     private func verifyUnlocked(attempt: Int, password: String) {
         if !SessionMonitor.screenIsLocked {
-            Log.info("自动解锁成功 ✅")
+            let cost = unlockStartedAt.map { String(format: "%.1f", Date().timeIntervalSince($0)) } ?? "?"
+            Log.info("自动解锁成功 ✅ 耗时 \(cost) 秒")
             finish(password: password, success: true)
             return
         }
-        if attempt >= 2 {
+        if attempt >= 20 {
             Log.error("自动解锁失败：仍处于锁屏状态")
             fail(password: password, reason: "密码被拒绝或界面未响应")
             return
         }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { [weak self] in
+        DispatchQueue.main.asyncAfter(deadline: .now() + verifyPoll) { [weak self] in
             self?.verifyUnlocked(attempt: attempt + 1, password: password)
         }
     }
