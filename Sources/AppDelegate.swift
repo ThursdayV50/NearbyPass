@@ -8,6 +8,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private var statusItem: NSStatusItem!
     private var statusTimer: Timer?
+    private var activityToken: NSObjectProtocol?
 
     // 动态菜单项
     private var presenceItem: NSMenuItem!
@@ -24,6 +25,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         Log.info("NearbyPass 启动 v1.0")
         Settings.shared.migrateAutoAliasesIfNeeded()
+        // 锁屏 / 屏保时别被 App Nap 降频，否则蓝牙采样和定时器会被拖慢甚至停摆
+        activityToken = ProcessInfo.processInfo.beginActivity(
+            options: [.userInitiatedAllowingIdleSystemSleep, .suddenTerminationDisabled],
+            reason: "锁屏后仍需持续采样蓝牙信号以判断人是否在附近")
         Log.info("辅助功能权限: \(AX.isTrusted ? "已授权" : "未授权")；密码: \(KeychainStore.shared.hasPassword() ? "已保存" : "未设置")")
 
         buildMenu()

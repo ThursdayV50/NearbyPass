@@ -65,6 +65,7 @@ final class PresenceMonitor: NSObject {
     private var central: CBCentralManager!
     private var devices: [String: DeviceReading] = [:]
     private var sampleTimer: Timer?
+    private var tickCount = 0
 
     // 名字解析
     private var peripherals: [String: CBPeripheral] = [:]
@@ -221,6 +222,22 @@ final class PresenceMonitor: NSObject {
             devices[id] = d
         }
         recomputePresence()
+
+        // 锁屏时每 15 秒打一次心跳，方便排查锁屏后蓝牙是否还在采样；
+        // 平时 5 分钟一次，避免日志被刷爆
+        let locked = SessionMonitor.screenIsLocked
+        if tickCount % (locked ? 15 : 300) == 0 {
+            let sid = Settings.shared.primaryDeviceID ?? Settings.shared.trustedDeviceIDs.first
+            if let sid, let d = devices[sid] {
+                let age = now.timeIntervalSince(d.lastSeen)
+                Log.debug(String(format: "心跳 %@ %.0f dBm，%@秒前收到广播",
+                                  String(sid.prefix(8)), d.emaRSSI, age < 1 ? "0" : String(Int(age))))
+            } else {
+                Log.debug("心跳：主设备没有任何广播数据")
+            }
+        }
+        tickCount += 1
+
         onUpdate?()
     }
 
