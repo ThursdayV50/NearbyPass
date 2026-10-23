@@ -114,17 +114,20 @@ final class PresenceMonitor: NSObject {
 
     /// 界面上应显示的名字。识别不出真名时带上 identifier 前缀，方便区分多个"未知设备"
     func displayName(_ id: String) -> String {
+        // 优先级：本 App 里手动改的名 > 设备自己广播的名字 > GATT 读到的型号
+        // 广播名是用户在设备设置里起的（比如把 iPhone 改名成 xiaomi17），
+        // 比 GATT 的 "iPhone18,3 · Apple Inc." 更贴近用户认知，所以排在前面。
         if let a = Settings.shared.alias(id) { return a }
-        if let g = gattNames[id] { return g }
         if let d = devices[id], !Self.looksRandom(d.name) { return d.name }
+        if let g = gattNames[id] { return g }
         return "未知设备 · " + String(id.prefix(8))
     }
 
     /// 名字是否还是占位（用于界面配色与"命名"按钮）
     func isUnknownName(_ id: String) -> Bool {
         if Settings.shared.alias(id) != nil { return false }
-        if gattNames[id] != nil { return false }
         if let d = devices[id], !Self.looksRandom(d.name) { return false }
+        if gattNames[id] != nil { return false }
         return true
     }
 
@@ -362,7 +365,8 @@ extension PresenceMonitor: CBCentralManagerDelegate {
             existing.rawRSSI = rssi
             existing.emaRSSI = alpha * Double(rssi) + (1 - alpha) * existing.emaRSSI
             existing.lastSeen = now
-            if existing.name == "未知设备", name != "未知设备" { existing.name = name }
+            // 设备改名后广播名会变，只要新名字不是随机串就跟着更新
+            if name != "未知设备", !Self.looksRandom(name) { existing.name = name }
             devices[id] = existing
         } else {
             devices[id] = DeviceReading(
@@ -482,7 +486,8 @@ extension PresenceMonitor: CBPeripheralDelegate {
             gattNames[id] = name
             // 持久化：GATT 读到的型号名写入别名表，重启后不必再连一次。用户手动命名过的保持不动。
             if Settings.shared.alias(id) == nil {
-                Settings.shared.setAlias(id, name)
+                // 只放在内存里的 gattNames，不写进 Settings.alias ——
+                // 那是给用户手动命名用的，自动填充会盖住设备自己广播的名字。
             }
             Log.info("识别设备: \(name) (\(id.prefix(8)))")
         } else {

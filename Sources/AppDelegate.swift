@@ -23,6 +23,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         Log.info("NearbyPass 启动 v1.0")
+        Settings.shared.migrateAutoAliasesIfNeeded()
         Log.info("辅助功能权限: \(AX.isTrusted ? "已授权" : "未授权")；密码: \(KeychainStore.shared.hasPassword() ? "已保存" : "未设置")")
 
         buildMenu()

@@ -162,4 +162,23 @@ final class Settings {
     var isConfigured: Bool {
         !trustedDeviceIDs.isEmpty && primaryDeviceID != nil
     }
+
+    /// 早期版本会把 GATT 读到的型号（如 "iPhone18,3 · Apple Inc."）自动写成别名，
+    /// 那样会盖住用户自己在设备上起的广播名。这里清一次。
+    func migrateAutoAliasesIfNeeded() {
+        let key = "aliasMigrationV1"
+        guard !UserDefaults.standard.bool(forKey: key) else { return }
+        UserDefaults.standard.set(true, forKey: key)
+        guard let re = try? NSRegularExpression(pattern: "^[A-Za-z0-9_,.]+ · .+$") else { return }
+        var dict = deviceAliases
+        var changed = false
+        for (id, name) in dict {
+            if re.firstMatch(in: name, range: NSRange(name.startIndex..., in: name)) != nil {
+                dict.removeValue(forKey: id)
+                changed = true
+                Log.info("清理自动生成的后台设备名：\(name)")
+            }
+        }
+        if changed { deviceAliases = dict }
+    }
 }
