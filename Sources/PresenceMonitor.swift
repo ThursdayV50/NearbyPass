@@ -106,11 +106,12 @@ final class PresenceMonitor: NSObject {
         if s == "未知设备" { return true }
         let hasCJK = s.unicodeScalars.contains { $0.value >= 0x4E00 && $0.value <= 0x9FFF }
         if hasCJK { return false }
-        if s.contains(" ") || s.contains("-") || s.contains("_") || s.contains(".") { return false }
-        // 纯字母数字且长度 ≥ 16，基本就是随机串
-        let alnum = s.allSatisfy { $0.isLetter || $0.isNumber }
-        if alnum && s.count >= 16 { return true }
-        return false
+        if s.contains(" ") { return false }
+        // 带人类常用分隔符的，基本是有意义的名字（ESP32-AB12、lemesh.light 之类）
+        let human = CharacterSet(charactersIn: "-_.()[]")
+        if s.rangeOfCharacter(from: human) != nil { return false }
+        // 剩下的多半是 Android / iOS 随机广播名，形如 NZ85fXTM5lfKJ/UXHiDNOZ84
+        return s.count >= 12
     }
 
     /// 界面上应显示的名字。识别不出真名时带上 identifier 前缀，方便区分多个"未知设备"

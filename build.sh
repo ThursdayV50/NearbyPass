@@ -14,7 +14,7 @@ cd "$ROOT" || exit 1
 
 APP="NearbyPass"
 BID="com.lcg.nearbypass"
-VER="1.0.2"
+VER="1.1.0"
 BUILD="$ROOT/.build"
 CACHE="$ROOT/.cache"
 OUT="$BUILD/$APP.app"
@@ -27,7 +27,7 @@ export SWIFT_MODULE_CACHE_PATH="$CACHE"
 export CLANG_MODULE_CACHE_PATH="$CACHE"
 
 SRC=()
-for f in Sources/*.swift; do [ -e "$f" ] && SRC+=("$f"); done
+for f in Sources/*.swift Sources/UI/*.swift; do [ -e "$f" ] && SRC+=("$f"); done
 if [ ${#SRC[@]} -eq 0 ]; then
   echo "错误: Sources/ 下没有 .swift 文件" >&2
   exit 1
@@ -40,7 +40,7 @@ swiftc -O -whole-module-optimization \
   -target "${ARCH}-apple-macos${MIN_OS}" -swift-version 5 \
   -framework CoreBluetooth -framework AppKit -framework ApplicationServices \
   -framework Security -framework Foundation -framework CoreGraphics \
-  -framework IOKit -framework ServiceManagement \
+  -framework IOKit -framework ServiceManagement -framework SwiftUI \
   -o "$BUILD/$APP.bin" \
   "${SRC[@]}" 2>"$ERR"
 RC=$?

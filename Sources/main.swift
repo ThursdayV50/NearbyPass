@@ -18,6 +18,28 @@ if CommandLine.arguments.contains("--install-to-applications") {
 // main.swift — 入口
 import AppKit
 
+// 调试：只查一次更新然后退出（不受单实例锁影响）
+if CommandLine.arguments.contains("--check-update") {
+    Task {
+        await Updater.shared.debugCheck()
+        exit(0)
+    }
+    RunLoop.main.run()
+}
+
+if CommandLine.arguments.contains("--print-install-script") {
+    Updater.shared.debugInstallScript()
+    exit(0)
+}
+
+if CommandLine.arguments.contains("--download-and-verify") {
+    Task {
+        await Updater.shared.debugDownloadAndVerify()
+        exit(0)
+    }
+    RunLoop.main.run()
+}
+
 // MARK: - 单实例锁
 let supportDir = URL(fileURLWithPath: NSHomeDirectory())
     .appendingPathComponent("Library/Application Support/NearbyPass", isDirectory: true)

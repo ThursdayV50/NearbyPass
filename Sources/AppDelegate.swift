@@ -75,7 +75,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         let forceSettings = CommandLine.arguments.contains("--settings")
-        if forceSettings || (!Settings.shared.isConfigured && !UserDefaults.standard.bool(forKey: "noAutoOpen")) {
+        let forceTutorial = CommandLine.arguments.contains("--tutorial")
+        let firstRun = !Settings.shared.hasCompletedOnboard
+
+        if forceTutorial || firstRun {
+            Log.info(forceTutorial ? "命令行要求看教程" : "第一次启动，展示教程")
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.7) {
+                TutorialWindow.shared.show()
+            }
+        } else if forceSettings || (!Settings.shared.isConfigured && !UserDefaults.standard.bool(forKey: "noAutoOpen")) {
             Log.info(forceSettings ? "命令行要求打开设置" : "尚未配置信任设备，打开设置引导")
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
                 SettingsWindow.shared.show()
@@ -135,6 +143,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         menu.addItem(makeItem("设置…", #selector(openSettings), ","))
         menu.addItem(makeItem("权限自检…", #selector(showDiagnostics)))
+        menu.addItem(makeItem("检查更新…", #selector(checkUpdate)))
         menu.addItem(makeItem("查看日志", #selector(openLog)))
 
         installItem = makeItem("安装到「应用程序」", #selector(installToApplications))
@@ -208,7 +217,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func openSettings() {
-        SettingsWindow.shared.show()
+        MainActor.assumeIsolated { SettingsWindow.shared.show() }
     }
 
     @objc private func installToApplications() {
@@ -231,6 +240,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func openLog() {
         NSWorkspace.shared.open(URL(fileURLWithPath: Log.shared.logFilePath))
+    }
+
+    @objc private func checkUpdate() {
+        Updater.shared.checkInteractive()
     }
 
     @objc private func showDiagnostics() {
