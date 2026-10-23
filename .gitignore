@@ -1,0 +1,15 @@
+# 构建产物
+.build/
+.cache/
+*.bin
+*.err
+DerivedData/
+
+# 签名身份（含私钥，绝不入库）
+.signing/
+
+# 系统垃圾
+.DS_Store
+
+# 开发期的截图证据（含个人桌面/登录界面，不入库）
+docs/*.png
