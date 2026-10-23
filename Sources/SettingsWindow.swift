@@ -36,9 +36,10 @@ final class SettingsWindow: NSObject, NSWindowDelegate {
         let screen = NSScreen.main?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
         let cap = UserDefaults.standard.double(forKey: "windowHeightCap")
         let maxH = (cap > 0 ? cap : screen.height - 48)
-        let height = max(480, min(natural + 2, maxH))
+        let chrome: CGFloat = 124          // 头部 + 底栏的固定高度
+        let height = max(480, min(natural + chrome, maxH))
 
-        let host = NSHostingView(rootView: SettingsView())
+        let host = NSHostingView(rootView: SettingsView(cardsHeight: natural))
         let size = NSSize(width: 700, height: height)
         let w = NSWindow(
             contentRect: NSRect(origin: .zero, size: size),
@@ -62,6 +63,7 @@ final class SettingsWindow: NSObject, NSWindowDelegate {
         host.autoresizingMask = [.width, .height]
         container.addSubview(host)
         w.contentView = container
+        Log.info("SIZE host=\(host.frame.size) container=\(container.frame.size) window=\(w.frame.size) natural=\(Int(natural))")
         w.center()
 
         window = w

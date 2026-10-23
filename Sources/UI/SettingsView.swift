@@ -8,31 +8,48 @@ struct SettingsView: View {
 
     /// true 时按内容自然高度渲染，仅用于量尺寸；正常显示时为 false，让内容在窗口内滚动
     var measured: Bool = false
+    /// 卡片的实测总高度。滚动区必须拿到确切高度，否则 SwiftUI 会把内容压到可视高度，滚不动
+    var cardsHeight: CGFloat? = nil
 
     @State private var renameTarget: DeviceVM? = nil
     @State private var renameText = ""
     @State private var showPasswordSheet = false
     @State private var passwordInput = ""
-    @State private var showAdvanced = false
+    @State private var showAdvanced = UserDefaults.standard.bool(forKey: "expandAdvanced")
+
+    /// 所有卡片；量高度时单独渲染它，才能拿到真实内容高度
+    private var cards: some View {
+        VStack(spacing: 12) {
+            signalCard
+            deviceCard
+            thresholdCard
+            behaviorCard
+        }
+        .padding(.horizontal, 18)
+        .padding(.bottom, 14)
+    }
 
     var body: some View {
+        Group {
+            if measured {
+                cards
+                    .frame(width: 700)
+                    .fixedSize(horizontal: false, vertical: true)
+            } else {
+                normal
+            }
+        }
+    }
+
+    private var normal: some View {
         VStack(spacing: 0) {
             header
             ScrollView(.vertical, showsIndicators: true) {
-                VStack(spacing: 12) {
-                    signalCard
-                    deviceCard
-                    thresholdCard
-                    behaviorCard
-                }
-                .padding(.horizontal, 18)
-                .padding(.bottom, 14)
+                cards
             }
             footer
         }
         .frame(width: 700)
-        .modifier(MeasureIfNeeded(measured: measured))
-        .frame(maxHeight: .infinity)
         .background(BrandBackground())
         .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
         .overlay(
@@ -45,17 +62,6 @@ struct SettingsView: View {
         .sheet(isPresented: $showPasswordSheet) { passwordSheet }
         .onAppear { m.start() }
     }
-
-    private struct MeasureIfNeeded: ViewModifier {
-    let measured: Bool
-    func body(content: Content) -> some View {
-        if measured {
-            content.fixedSize(horizontal: false, vertical: true)
-        } else {
-            content
-        }
-    }
-}
 
 // MARK: - 头部
 

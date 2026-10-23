@@ -79,6 +79,7 @@ final class AppModel: ObservableObject {
         presenceDot = Self.dot(for: p.presence)
         bestRSSI = p.bestTrustedRSSI()
         paused = s.paused
+        showInMenuBar = s.showInMenuBar
         bluetoothOn = (p.bluetoothState == .poweredOn)
 
         // 曲线：取主设备（没有就取最强信任设备）
@@ -165,6 +166,7 @@ final class AppModel: ObservableObject {
     func setPaused(_ v: Bool) { Settings.shared.paused = v; refresh() }
 
     func setShowInMenuBar(_ v: Bool) {
+        showInMenuBar = v            // 先落地到 UI 状态，避免 toggle 回弹
         Settings.shared.showInMenuBar = v
         (NSApp.delegate as? AppDelegate)?.applyMenuBarVisibility()
         refresh()
