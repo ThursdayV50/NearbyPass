@@ -55,6 +55,12 @@ final class ConfirmPanel {
     private var onAllow: (() -> Void)?
     private var finished = false
     private var countLabel: NSTextField?
+    private var statusLabel: NSTextField?
+    private var watch: Timer?
+    private var submitted = false
+    private var targetWindow = 0
+    private var allowButton: NSButton?
+    private var cancelButton: NSButton?
 
     private init() {}
 
@@ -65,10 +71,13 @@ final class ConfirmPanel {
         rssi: Int,
         seconds: Int = 20,
         anchor: CGRect? = nil,
+        windowNumber: Int = 0,
         onAllow: @escaping () -> Void
     ) {
         close()
         finished = false
+        submitted = false
+        targetWindow = windowNumber
         self.onAllow = onAllow
         self.remaining = max(3, seconds)
 
@@ -181,8 +190,15 @@ final class ConfirmPanel {
         let count = NSTextField(labelWithString: "")
         count.font = .monospacedDigitSystemFont(ofSize: 11, weight: .regular)
         count.textColor = .tertiaryLabelColor
-        count.frame = NSRect(x: 24, y: 22, width: 180, height: 16)
+        count.frame = NSRect(x: 24, y: 22, width: 220, height: 16)
         countLabel = count
+
+        let status = NSTextField(labelWithString: "")
+        status.font = .systemFont(ofSize: 11, weight: .medium)
+        status.textColor = .secondaryLabelColor
+        status.frame = NSRect(x: 200, y: 22, width: w - 224, height: 16)
+        status.alignment = .right
+        statusLabel = status
 
         // ── 按钮（主按钮在右，符合 macOS 习惯）
         let allowW: CGFloat = 92, btnH: CGFloat = 32
@@ -192,12 +208,14 @@ final class ConfirmPanel {
         allow.font = .systemFont(ofSize: 13, weight: .medium)
         allow.contentTintColor = .controlAccentColor
         allow.frame = NSRect(x: w - 24 - allowW, y: 15, width: allowW, height: btnH)
+        self.allowButton = allow
 
         let cancelW: CGFloat = 72
         let cancel = ClickThroughButton(title: "取消", target: self, action: #selector(cancelTapped))
         cancel.bezelStyle = .rounded
         cancel.font = .systemFont(ofSize: 13, weight: .regular)
         cancel.frame = NSRect(x: w - 24 - allowW - 8 - cancelW, y: 15, width: cancelW, height: btnH)
+        self.cancelButton = cancel
 
         bg.addSubview(iconBox)
         bg.addSubview(title)
@@ -207,6 +225,7 @@ final class ConfirmPanel {
         bg.addSubview(dBm)
         bg.addSubview(sep)
         bg.addSubview(count)
+        bg.addSubview(status)
         bg.addSubview(cancel)
         bg.addSubview(allow)
         p.contentView = bg
@@ -227,6 +246,21 @@ final class ConfirmPanel {
         }
         RunLoop.main.add(t, forMode: .common)
         countdown = t
+
+        // 监视目标弹窗：它先一步消失说明用户自己完成/取消了
+        let w2 = Timer(timeInterval: 0.4, repeats: true) { [weak self] _ in
+            self?.checkTarget()
+        }
+        RunLoop.main.add(w2, forMode: .common)
+        watch = w2
+
+        // 兜底：任何情况下浮窗都不该无限留在屏幕上
+        DispatchQueue.main.asyncAfter(deadline: .now() + 90) { [weak self] in
+            guard let self, !self.finished else { return }
+            Log.info("确认浮窗超时兜底关闭")
+            self.finished = true
+            self.close()
+        }
 
         // 打印「允许」按钮的真实屏幕坐标（左上原点），供自动化点击校验
         let btnRect = allow.convert(allow.bounds, to: nil)
@@ -253,12 +287,59 @@ final class ConfirmPanel {
     }
 
     @objc private func allowTapped() {
-        guard !finished else { return }
-        finished = true
-        let cb = onAllow
-        close()
+        guard !finished, !submitted else { return }
+        submitted = true
+        allowButton?.isEnabled = false
+        cancelButton?.isEnabled = false
+        countdown?.invalidate()
+        countdown = nil
+        countLabel?.stringValue = ""
+        statusLabel?.stringValue = "正在填写…"
         Log.info("用户点击「允许」，开始填写")
-        cb?()
+        onAllow?()
+    }
+
+    /// 供外部更新状态行
+    func updateStatus(_ text: String) {
+        DispatchQueue.main.async { [weak self] in
+            self?.statusLabel?.stringValue = text
+        }
+    }
+
+    /// 完成收尾：延时关闭，给用户看一眼状态
+    func finish(after delay: TimeInterval = 1.0) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+            self?.finished = true
+            self?.close()
+        }
+    }
+
+    private func checkTarget() {
+        guard targetWindow > 0, !finished else { return }
+        let stillThere = Self.windowExists(targetWindow)
+        if !stillThere {
+            watch?.invalidate()
+            watch = nil
+            if submitted {
+                // 我们自己提交过，按正常验证流程走
+                return
+            }
+            countdown?.invalidate()
+            countdown = nil
+            countLabel?.stringValue = ""
+            statusLabel?.stringValue = "你已完成，未做操作"
+            Log.info("目标弹窗已消失（用户手动完成），浮窗自动关闭")
+            finish(after: 0.9)
+        }
+    }
+
+    private static func windowExists(_ number: Int) -> Bool {
+        guard let list = CGWindowListCopyWindowInfo([.optionOnScreenOnly], kCGNullWindowID)
+                as? [[String: Any]] else { return false }
+        for w in list {
+            if let n = w[kCGWindowNumber as String] as? Int, n == number { return true }
+        }
+        return false
     }
 
     @objc private func cancelTapped() {
@@ -271,6 +352,11 @@ final class ConfirmPanel {
     func close() {
         countdown?.invalidate()
         countdown = nil
+        watch?.invalidate()
+        watch = nil
+        allowButton = nil
+        cancelButton = nil
+        statusLabel = nil
         panel?.orderOut(nil)
         panel = nil
         countLabel = nil

@@ -138,4 +138,45 @@ enum AX {
         }
         return press(target.el) == .success
     }
+
+    // MARK: - 窗口作用域（弹窗可能有多个，按进程搜会串窗）
+
+    /// 找到含密码框的那个窗口根元素；找不到就返回 nil
+    static func authWindow(pid: pid_t) -> AXUIElement? {
+        let app = self.app(pid)
+        guard let wins = attr(app, kAXWindowsAttribute) as? [AXUIElement] else { return nil }
+        for w in wins where !secureFields(in: w).isEmpty { return w }
+        return nil
+    }
+
+    static func secureFields(in root: AXUIElement) -> [AXUIElement] {
+        all(root).filter { role($0) == "AXTextField" && subrole($0) == "AXSecureTextField" }
+    }
+
+    /// 只在该窗口子树里找按钮
+    static func buttons(in root: AXUIElement) -> [(el: AXUIElement, label: String)] {
+        all(root).filter { role($0) == "AXButton" }.map { (el: $0, label: label($0)) }
+    }
+
+    /// 密码框里是否已经有内容（用户手动输入过）
+    static func fieldHasText(_ el: AXUIElement) -> Bool {
+        if let n = attr(el, kAXNumberOfCharactersAttribute) as? Int, n > 0 { return true }
+        if let s = string(el, kAXValueAttribute), !s.isEmpty { return true }
+        return false
+    }
+
+    /// 当前系统焦点元素，用于注入前的安全校验
+    static func focusedElement() -> AXUIElement? {
+        let sys = AXUIElementCreateSystemWide()
+        var v: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(sys, kAXFocusedUIElementAttribute as CFString, &v) == .success,
+              let v, CFGetTypeID(v) == AXUIElementGetTypeID() else { return nil }
+        return (v as! AXUIElement)
+    }
+
+    static func pidOf(_ el: AXUIElement) -> pid_t {
+        var p: pid_t = 0
+        AXUIElementGetPid(el, &p)
+        return p
+    }
 }

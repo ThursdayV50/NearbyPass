@@ -21,6 +21,7 @@ final class AuthDialogHandler {
 
     private var timer: Timer?
     private var handled: Set<Int> = []
+    private var lastSubmit: [Int: Date] = [:]
     /// 已经提示过「设备不在附近」的窗口，避免每 0.4 秒刷一条日志
     private var warnedNotNearby: Set<Int> = []
     private var cooldownUntil: Date?
@@ -87,7 +88,8 @@ final class AuthDialogHandler {
                 devRSSI = Int(d.emaRSSI.rounded())
             }
         }
-        ConfirmPanel.shared.show(device: devName, rssi: devRSSI, anchor: fresh.bounds) { [weak self] in
+        ConfirmPanel.shared.show(device: devName, rssi: devRSSI, anchor: fresh.bounds,
+                                 windowNumber: fresh.number) { [weak self] in
             self?.fill(pid: fresh.pid, windowNumber: fresh.number)
         }
     }
@@ -193,6 +195,17 @@ final class AuthDialogHandler {
             return
         }
 
+        // ① 目标弹窗还在吗？不在说明用户已经自己完成了
+        guard Self.windowExists(windowNumber) else {
+            Log.info("目标弹窗已消失（你已手动完成），不做任何注入")
+            ConfirmPanel.shared.updateStatus("你已完成，未做操作")
+            ConfirmPanel.shared.finish(after: 0.9)
+            KeychainStore.zeroString(&password)
+            busy = false
+            handled.insert(windowNumber)
+            return
+        }
+
         if findField(pid: pid, deadline: Date().addingTimeInterval(2)) == nil {
             // 可能是 Touch ID 形态，先点「使用密码…」
             if pressUsePassword(pid: pid) {
@@ -207,6 +220,14 @@ final class AuthDialogHandler {
             return
         }
 
+        // ② 密码框里已经有内容 → 用户自己输入了，只帮它点提交，绝不覆盖
+        if AX.fieldHasText(field) {
+            Log.info("检测到密码框已有内容（你手动输入了），只提交、不覆盖")
+            KeychainStore.zeroString(&password)
+            submit(pid: pid, windowNumber: windowNumber, userTyped: true)
+            return
+        }
+
         // 优先 AX 直接写值：不依赖键盘焦点。
         // 这条弹窗是挂在「系统设置」上的 sheet，焦点不一定在密码框上，
         // 合成键盘事件有可能打到别处（实测就是这个原因导致填不进去）。
@@ -214,10 +235,17 @@ final class AuthDialogHandler {
         usleep(60000)
         let setErr = AX.setValue(field, password)
         if setErr != .success {
-            Log.warn("AX 写值失败（\(setErr.rawValue)），改用键盘投递")
-            let injector = Injector.shared
-            if !injector.typeText(password, perCharDelayMS: 12) {
-                Log.error("键盘投递也失败")
+            if Self.canTypeSafely(pid: pid) {
+                Log.warn("AX 写值失败（\(setErr.rawValue)），焦点确认在密码框，改用键盘投递")
+                if !Injector.shared.typeText(password, perCharDelayMS: 12) {
+                    Log.error("键盘投递也失败")
+                }
+            } else {
+                // 宁可不填，也不能把密码打进别的窗口
+                Log.error("AX 写值失败且焦点不在该密码框，放弃键盘投递")
+                KeychainStore.zeroString(&password)
+                fail(windowNumber: windowNumber, reason: "无法安全写入密码")
+                return
             }
         } else {
             Log.debug("AX 写值成功（焦点 err=\(focusErr.rawValue)）")
@@ -225,38 +253,73 @@ final class AuthDialogHandler {
         KeychainStore.zeroString(&password)
         usleep(250000)
 
-        // 提交：按常见按钮文案依次尝试，都不中就用 Return。
-        // 不同宿主/不同场景的按钮文案不一样（「好」「修改设置」「解锁」「允许」…），
-        // 只认「好」会漏掉「修改你的系统设置」这一类弹窗。
-        let buttons = AX.buttons(pid: pid).map { $0.label }
-        Log.debug("弹窗按钮: \(buttons.prefix(12).joined(separator: " / "))")
-        var pressedLabel: String? = nil
-        for label in Self.submitLabels where buttons.contains(label) {
-            if AX.pressButton(pid: pid, label: label) { pressedLabel = label; break }
+        submit(pid: pid, windowNumber: windowNumber, userTyped: false)
+    }
+
+    /// 提交密码。userTyped=true 表示内容是用户自己敲的，我们只按按钮。
+    private func submit(pid: pid_t, windowNumber: Int, userTyped: Bool) {
+        // 幂等：同一个窗口 3 秒内不重复提交
+        let now = Date()
+        if let last = lastSubmit[windowNumber], now.timeIntervalSince(last) < 3 {
+            Log.info("该弹窗 3 秒内已提交过，跳过重复提交")
+            return
         }
-        if let l = pressedLabel {
+        lastSubmit[windowNumber] = now
+
+        ConfirmPanel.shared.updateStatus(userTyped ? "正在提交你输入的内容…" : "正在提交…")
+
+        // 只在目标窗口的 AX 子树里找按钮，避免多窗口时按错
+        var buttons: [String] = []
+        if let win = AX.authWindow(pid: pid) {
+            buttons = AX.buttons(in: win).map { $0.label }
+        }
+        Log.debug("弹窗按钮: \(buttons.prefix(12).joined(separator: " / "))")
+
+        var pressed: String? = nil
+        for label in Self.submitLabels where buttons.contains(label) {
+            if AX.pressButton(pid: pid, label: label) { pressed = label; break }
+        }
+        if let l = pressed {
             Log.info("已点击「\(l)」，等待验证")
+        } else if userTyped {
+            // 用户输入的内容不代按 Return，避免和他自己的操作打架
+            Log.warn("没找到提交按钮，也未按 Return（内容是你输入的）")
         } else {
             Log.warn("没有匹配到提交按钮，改用 Return")
             Injector.shared.pressReturn()
-            Log.info("已提交密码，等待验证")
         }
 
-        // 验证：弹窗关闭需要一点动画时间，1.5 秒判一次太急，会误报「密码不正确」。
-        // 改成 0.6 秒后开始、每 0.4 秒查一次，最多等约 3.8 秒。
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { [weak self] in
             self?.verify(windowNumber: windowNumber, attempts: 8)
         }
+    }
+
+    /// 注入前的安全校验：焦点必须真的在这个弹窗的密码框上
+    private static func canTypeSafely(pid: pid_t) -> Bool {
+        guard let f = AX.focusedElement() else { return false }
+        return AX.pidOf(f) == pid
+            && AX.role(f) == "AXTextField"
+            && AX.subrole(f) == "AXSecureTextField"
+    }
+
+    static func windowExists(_ number: Int) -> Bool {
+        guard let list = CGWindowListCopyWindowInfo([.optionOnScreenOnly], kCGNullWindowID)
+                as? [[String: Any]] else { return false }
+        return list.contains { ($0[kCGWindowNumber as String] as? Int) == number }
     }
 
     private func verify(windowNumber: Int, attempts: Int) {
         if !authMainWindows().contains(where: { $0.number == windowNumber }) {
             Log.info("自动填写成功 ✅")
             busy = false
+            ConfirmPanel.shared.updateStatus("已填写")
+            ConfirmPanel.shared.finish(after: 1.0)
             return
         }
         guard attempts > 0 else {
             Log.error("自动填写失败：弹窗仍在（密码可能不正确）")
+            ConfirmPanel.shared.updateStatus("密码可能不正确")
+            ConfirmPanel.shared.finish(after: 1.4)
             fail(windowNumber: windowNumber, reason: "密码可能不正确")
             return
         }
@@ -296,5 +359,7 @@ final class AuthDialogHandler {
         cooldownUntil = Date().addingTimeInterval(Settings.shared.authCooldown)
         Log.error("授权弹窗填写终止：\(reason)。冷却 \(Int(Settings.shared.authCooldown)) 秒。")
         Notifier.post(title: "自动填写失败", body: reason)
+        ConfirmPanel.shared.updateStatus("未能填写")
+        ConfirmPanel.shared.finish(after: 1.4)
     }
 }
