@@ -6,6 +6,9 @@ import AppKit
 struct SettingsView: View {
     @ObservedObject var m = AppModel.shared
 
+    /// true 时按内容自然高度渲染，仅用于量尺寸；正常显示时为 false，让内容在窗口内滚动
+    var measured: Bool = false
+
     @State private var renameTarget: DeviceVM? = nil
     @State private var renameText = ""
     @State private var showPasswordSheet = false
@@ -15,7 +18,7 @@ struct SettingsView: View {
     var body: some View {
         VStack(spacing: 0) {
             header
-            ScrollView(.vertical, showsIndicators: false) {
+            ScrollView(.vertical, showsIndicators: true) {
                 VStack(spacing: 12) {
                     signalCard
                     deviceCard
@@ -28,7 +31,8 @@ struct SettingsView: View {
             footer
         }
         .frame(width: 700)
-        .fixedSize(horizontal: false, vertical: true)
+        .modifier(MeasureIfNeeded(measured: measured))
+        .frame(maxHeight: .infinity)
         .background(BrandBackground())
         .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
         .overlay(
@@ -42,7 +46,18 @@ struct SettingsView: View {
         .onAppear { m.start() }
     }
 
-    // MARK: - 头部
+    private struct MeasureIfNeeded: ViewModifier {
+    let measured: Bool
+    func body(content: Content) -> some View {
+        if measured {
+            content.fixedSize(horizontal: false, vertical: true)
+        } else {
+            content
+        }
+    }
+}
+
+// MARK: - 头部
 
     private var header: some View {
         HStack(alignment: .top) {
