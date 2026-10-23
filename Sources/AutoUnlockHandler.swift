@@ -28,6 +28,12 @@ final class AutoUnlockHandler {
     /// 密码疑似错误 —— 本会话内不再尝试
     private var passwordSuspect = false
     private var busy = false
+    /// 界面没就绪（屏保没退、密码框还没出来）导致的重试次数
+    private var transientRetries = 0
+    private let maxTransientRetries = 3
+    /// 锁屏界面真正的提交按钮叫 login（挂在 AXDescription 上），
+    /// Return 在锁屏界面并不一定触发提交，所以优先按按钮。
+    private static let submitLabels = ["login", "登录", "解锁", "Unlock", "unlock", "好", "确定"]
 
     private init() {}
 
@@ -44,6 +50,7 @@ final class AutoUnlockHandler {
     func onSessionLocked() {
         attemptedThisSession = false
         passwordSuspect = false
+        transientRetries = 0
         strongSince = nil
     }
 
@@ -126,42 +133,60 @@ final class AutoUnlockHandler {
 
     private func injectPassword(_ password: String) {
         guard let pid = loginWindowPid() else {
-            Log.error("找不到 loginwindow 进程")
-            fail(password: password, reason: "找不到 loginwindow")
+            // loginwindow 还没起来，等一下再说，不算失败
+            abortTransient("loginwindow 还没就绪")
             return
         }
 
-        // 密码框可能还没就绪，最多等 5 秒
-        findSecureField(pid: pid, deadline: Date().addingTimeInterval(5)) { [weak self] field in
+        // 屏保挡在锁屏界面前面时，Return 会打给屏保而不是密码框，
+        // 先合成一次 Shift 把屏保退掉（Shift 在密码框里没有副作用）。
+        if screensaverRunning() {
+            Log.info("检测到屏保正在运行，先退出屏保")
+            nudgeUserInput()
+            usleep(1600000)
+        }
+
+        // 空闲锁屏后密码框常常要好几秒才出来，给足 25 秒
+        findSecureField(pid: pid, deadline: Date().addingTimeInterval(25)) { [weak self] field in
             guard let self = self else { return }
             guard let field = field else {
-                Log.error("loginwindow 中找不到密码框")
-                self.fail(password: password, reason: "找不到密码框")
+                self.abortTransient("锁屏界面里找不到密码框")
                 return
             }
 
-            _ = AX.focus(field)
-            usleep(80000)
-
-            // 真实键盘路径（Phase 0 已验证可穿透 Secure Input）
             let injector = Injector.shared
-            let ok = injector.typeText(password, perCharDelayMS: 12)
-            if !ok {
-                Log.warn("部分字符投递失败，尝试用 AX 直接写值")
-                AX.setValue(field, password)
+            let all = AX.secureFields(pid: pid)
+            let focusErr = AX.focus(field)
+            usleep(300000)
+
+            // AX 直接写值最稳：不依赖键盘焦点、不受输入法/布局影响。
+            // Phase 0 实测 AX 写值和 CGEventPost 都能进 Secure Input 的框。
+            let setErr = AX.setValue(field, password)
+            Log.info("密码框 \(all.count) 个，聚焦 err=\(focusErr.rawValue)，写值 err=\(setErr.rawValue)")
+
+            if setErr != .success {
+                Log.warn("AX 写值失败，回退到合成键盘输入")
+                let ok = injector.typeText(password, perCharDelayMS: 12)
+                if !ok { Log.error("合成键盘输入也失败了") }
             }
-            usleep(200000)
-            injector.pressReturn()
+            usleep(300000)
+
+            var submitted = false
+            for label in Self.submitLabels {
+                if AX.pressButton(pid: pid, label: label) {
+                    submitted = true
+                    Log.info("已点击「\(label)」提交")
+                    break
+                }
+            }
+            if !submitted {
+                injector.pressReturn()
+                Log.info("未找到提交按钮，已发送 Return")
+            }
             Log.info("已提交密码，等待验证")
 
             DispatchQueue.main.asyncAfter(deadline: .now() + self.verifyDelay) {
-                if SessionMonitor.screenIsLocked {
-                    Log.error("自动解锁失败：仍处于锁屏状态")
-                    self.fail(password: password, reason: "密码被拒绝或界面未响应")
-                } else {
-                    Log.info("自动解锁成功 ✅")
-                    self.finish(password: password, success: true)
-                }
+                self.verifyUnlocked(attempt: 0, password: password)
             }
         }
     }
@@ -183,6 +208,60 @@ final class AutoUnlockHandler {
         }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
             self?.findSecureField(pid: pid, deadline: deadline, attempt: attempt + 1, completion: completion)
+        }
+    }
+
+    /// 密码提交后确认解锁；多等两轮，避免把"界面慢"误判成"密码错"
+    private func verifyUnlocked(attempt: Int, password: String) {
+        if !SessionMonitor.screenIsLocked {
+            Log.info("自动解锁成功 ✅")
+            finish(password: password, success: true)
+            return
+        }
+        if attempt >= 2 {
+            Log.error("自动解锁失败：仍处于锁屏状态")
+            fail(password: password, reason: "密码被拒绝或界面未响应")
+            return
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { [weak self] in
+            self?.verifyUnlocked(attempt: attempt + 1, password: password)
+        }
+    }
+
+    /// 屏保进程是否在跑
+    private func screensaverRunning() -> Bool {
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: "/usr/bin/pgrep")
+        p.arguments = ["-x", "ScreenSaverEngine"]
+        p.standardOutput = Pipe()
+        p.standardError = Pipe()
+        do { try p.run() } catch { return false }
+        p.waitUntilExit()
+        return p.terminationStatus == 0
+    }
+
+    /// 合成一次 Shift 按键：任何真实输入都能让屏保退出
+    private func nudgeUserInput() {
+        let src = CGEventSource(stateID: .hidSystemState)
+        src?.localEventsSuppressionInterval = 0
+        let down = CGEvent(keyboardEventSource: src, virtualKey: CGKeyCode(kVK_Shift), keyDown: true)
+        let up = CGEvent(keyboardEventSource: src, virtualKey: CGKeyCode(kVK_Shift), keyDown: false)
+        down?.post(tap: .cghidEventTap)
+        usleep(30000)
+        up?.post(tap: .cghidEventTap)
+    }
+
+    /// 界面没就绪这类失败：不算密码错，稍后重新走一遍
+    private func abortTransient(_ reason: String) {
+        busy = false
+        attemptedThisSession = false
+        transientRetries += 1
+        if transientRetries >= maxTransientRetries {
+            passwordSuspect = true
+            Log.error("自动解锁放弃：\(reason)（已尝试 \(transientRetries) 次）")
+            Notifier.post(title: "自动解锁未完成", body: "\(reason)。请手动解锁。")
+        } else {
+            Log.warn("自动解锁推迟：\(reason)，稍后重试")
         }
     }
 

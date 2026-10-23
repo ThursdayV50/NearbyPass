@@ -6,6 +6,7 @@
 //   · 否则 → .auto（可以自动解锁）
 //   · .manual 必须等到设备「先离开、再回来」才解除
 import Foundation
+import CoreGraphics
 
 enum LockReason: String {
     case auto   = "人已离开"
@@ -27,6 +28,16 @@ final class LockReasonTracker {
 
     /// .manual 状态下是否已经观察到设备离开
     private var sawAbsentSinceManual = false
+
+    /// 超过这个秒数没有任何键鼠输入，就认为这次锁屏是系统空闲/屏保触发的
+    private let idleLockSeconds: TimeInterval = 90
+
+    /// 距离上一次真实键鼠输入过了多少秒
+    static func idleSeconds() -> TimeInterval {
+        // kCGAnyInputEventType
+        let any = CGEventType(rawValue: UInt32.max)!
+        return CGEventSource.secondsSinceLastEventType(.combinedSessionState, eventType: any)
+    }
 
     private init() {}
 
@@ -67,6 +78,16 @@ final class LockReasonTracker {
             selfLockRequested = false
             reason = .auto
             Log.info("锁屏原因: \(reason.rawValue)（由 NearbyPass 触发）")
+            return
+        }
+
+        // 系统空闲锁屏（屏保 / 显示器休眠）不是人主动锁的，
+        // 手机大概率就放在桌上，必须允许自动解锁。
+        let idle = Self.idleSeconds()
+        if idle >= idleLockSeconds {
+            reason = .auto
+            sawAbsentSinceManual = false
+            Log.info("锁屏原因: \(reason.rawValue)（系统空闲 \(Int(idle)) 秒后自动锁屏）")
             return
         }
 
