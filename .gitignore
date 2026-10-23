@@ -13,3 +13,5 @@ DerivedData/
 
 # 开发期的截图证据（含个人桌面/登录界面，不入库）
 docs/*.png
+
+NearbyPass-*.zip
