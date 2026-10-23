@@ -27,7 +27,8 @@ struct SettingsView: View {
             }
             footer
         }
-        .frame(width: 700, height: 812)
+        .frame(width: 700)
+        .fixedSize(horizontal: false, vertical: true)
         .background(BrandBackground())
         .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
         .overlay(
@@ -48,7 +49,7 @@ struct SettingsView: View {
             VStack(alignment: .leading, spacing: 3) {
                 Text("NearbyPass")
                     .font(.system(size: 21, weight: .semibold, design: .rounded))
-                Text("蓝牙在场驱动的 自动解锁 · 自动锁屏 · 授权弹窗填密码")
+                Text("自动解锁 · 自动锁屏 · 授权弹窗填写")
                     .font(.system(size: 11))
                     .foregroundStyle(.secondary)
             }
@@ -84,9 +85,9 @@ struct SettingsView: View {
                             lock: m.lockThreshold)
                     .frame(height: 74)
                 HStack(spacing: 14) {
-                    legend(color: Color(red: 0.29, green: 0.85, blue: 0.55),
+                    legend(color: Color(white: 0.90),
                            text: "达到解锁强度 ≥ \(m.unlockThreshold)")
-                    legend(color: Color(red: 0.95, green: 0.52, blue: 0.30),
+                    legend(color: Color(white: 0.45),
                            text: "低于锁屏强度 ≤ \(m.lockThreshold)")
                     Spacer()
                     if let r = m.bestRSSI {
@@ -112,7 +113,7 @@ struct SettingsView: View {
     private var deviceCard: some View {
         GlassCard {
             VStack(alignment: .leading, spacing: 8) {
-                CardTitle(text: "设备", note: "勾选 = 算作「人在」 · ★ = 解锁主设备")
+                CardTitle(text: "设备", note: "勾选即视为在场 · ★ 为主设备")
                 if m.devices.isEmpty {
                     Text("正在扫描…")
                         .font(.system(size: 11.5))
@@ -152,7 +153,7 @@ struct SettingsView: View {
             Button { m.toggleTrust(d.id) } label: {
                 Image(systemName: d.trusted ? "checkmark.circle.fill" : "circle")
                     .font(.system(size: 14))
-                    .foregroundStyle(d.trusted ? Color.accentColor : Color.secondary.opacity(0.6))
+                    .foregroundStyle(d.trusted ? Color.primary : Color.secondary.opacity(0.6))
             }
             .buttonStyle(.plain)
 
@@ -222,10 +223,10 @@ struct SettingsView: View {
                 )
                 HStack {
                     Text("锁屏 \(m.lockThreshold) dBm").font(.system(size: 11)).monospacedDigit()
-                        .foregroundStyle(Color(red: 0.95, green: 0.62, blue: 0.42))
+                        .foregroundStyle(Color.secondary)
                     Spacer()
                     Text("解锁 \(m.unlockThreshold) dBm").font(.system(size: 11)).monospacedDigit()
-                        .foregroundStyle(Color(red: 0.42, green: 0.85, blue: 0.62))
+                        .foregroundStyle(Color.primary.opacity(0.85))
                 }
                 Text(m.unlockPrediction.text)
                     .font(.system(size: 10.5))
@@ -240,15 +241,18 @@ struct SettingsView: View {
         GlassCard {
             VStack(alignment: .leading, spacing: 10) {
                 CardTitle(text: "行为")
-                Toggle("授权弹窗出现时，问我一次然后自动填密码", isOn: Binding(
+                Toggle("授权弹窗出现时，确认后填入密码", isOn: Binding(
                     get: { m.autoFill }, set: { m.setAutoFill($0) }))
-                    .toggleStyle(.switch).font(.system(size: 11.5))
-                Toggle("手机在附近就自动解锁锁屏", isOn: Binding(
+                    .toggleStyle(.switch)
+                    .tint(Color(white: 0.62)).font(.system(size: 11.5))
+                Toggle("设备在场时自动解锁", isOn: Binding(
                     get: { m.autoUnlock }, set: { m.setAutoUnlock($0) }))
-                    .toggleStyle(.switch).font(.system(size: 11.5))
-                Toggle("人离开后自动锁屏", isOn: Binding(
+                    .toggleStyle(.switch)
+                    .tint(Color(white: 0.62)).font(.system(size: 11.5))
+                Toggle("设备离开后自动锁屏", isOn: Binding(
                     get: { m.autoLock }, set: { m.setAutoLock($0) }))
-                    .toggleStyle(.switch).font(.system(size: 11.5))
+                    .toggleStyle(.switch)
+                    .tint(Color(white: 0.62)).font(.system(size: 11.5))
 
                 DisclosureGroup(isExpanded: $showAdvanced) {
                     VStack(alignment: .leading, spacing: 8) {
@@ -321,7 +325,7 @@ struct SettingsView: View {
 
     private func renameSheet(_ d: DeviceVM) -> some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("给这台设备起个名字").font(.system(size: 13, weight: .semibold))
+            Text("设备名称").font(.system(size: 13, weight: .semibold))
             Text(d.id).font(.system(size: 9.5)).foregroundStyle(.tertiary)
                 .lineLimit(1).truncationMode(.middle)
             TextField("例如 我的手机", text: $renameText)

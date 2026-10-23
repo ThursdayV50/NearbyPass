@@ -112,7 +112,7 @@ struct WelcomePage: View {
             ZStack {
                 ForEach(0..<3, id: \.self) { i in
                     Circle()
-                        .strokeBorder(Color(red: 0.45, green: 0.68, blue: 1.0).opacity(0.45), lineWidth: 1.2)
+                        .strokeBorder(Color.white.opacity(0.30), lineWidth: 1)
                         .scaleEffect(phase + CGFloat(i) * 0.0)
                         .opacity((1 - phase) * 0.55)
                         .animation(
@@ -133,10 +133,10 @@ struct WelcomePage: View {
             }
 
             VStack(spacing: 10) {
-                Text("把手机当作你的钥匙")
+                Text("靠近即解锁")
                     .font(.system(size: 20, weight: .semibold))
                     .foregroundStyle(.white)
-                Text("手机在附近，Mac 就自动解锁；\n你走开，它就自动锁屏。")
+                Text("设备在附近时解除锁屏，\n离开后自动锁定。")
                     .font(.system(size: 12.5))
                     .multilineTextAlignment(.center)
                     .foregroundStyle(.white.opacity(0.62))
@@ -160,7 +160,7 @@ struct DialogPage: View {
 
     var body: some View {
         VStack(spacing: 22) {
-            Text("系统问你要密码时")
+            Text("授权弹窗自动填写")
                 .font(.system(size: 18, weight: .semibold)).foregroundStyle(.white)
 
             // 模拟的系统密码框
@@ -193,7 +193,7 @@ struct DialogPage: View {
             // App 弹的确认卡
             HStack(spacing: 8) {
                 Image(systemName: done ? "checkmark.circle.fill" : "dot.radiowaves.left.and.right")
-                    .foregroundStyle(done ? Color(red: 0.29, green: 0.85, blue: 0.55) : .white)
+                    .foregroundStyle(.white.opacity(done ? 0.92 : 0.30))
                 Text(done ? "已填好" : "设备在附近，要填密码吗？")
                     .font(.system(size: 11.5)).foregroundStyle(.white.opacity(0.9))
             }
@@ -203,7 +203,7 @@ struct DialogPage: View {
             .scaleEffect(showAsk ? 1 : 0.9)
             .opacity(showAsk ? 1 : 0)
 
-            Text("你点「允许」，它才填；不点就什么都不做。")
+            Text("需确认后才会填入，取消则不执行任何操作。")
                 .font(.system(size: 11)).foregroundStyle(.white.opacity(0.45))
         }
         .onAppear { run() }
@@ -241,7 +241,7 @@ struct LockPage: View {
 
     var body: some View {
         VStack(spacing: 24) {
-            Text("靠近解锁，走开锁屏")
+            Text("距离判定")
                 .font(.system(size: 18, weight: .semibold)).foregroundStyle(.white)
 
             HStack(spacing: 26) {
@@ -254,7 +254,7 @@ struct LockPage: View {
                 HStack(spacing: 4) {
                     ForEach(0..<3, id: \.self) { i in
                         Circle()
-                            .fill(Color(red: 0.45, green: 0.68, blue: 1.0))
+                            .fill(Color.white.opacity(0.55))
                             .frame(width: 5, height: 5)
                             .opacity(near ? 0.9 - Double(i) * 0.22 : 0.12)
                             .animation(Motion.quick.delay(Double(i) * 0.06), value: near)
@@ -264,7 +264,7 @@ struct LockPage: View {
                 // 电脑屏幕
                 ZStack {
                     RoundedRectangle(cornerRadius: 6, style: .continuous)
-                        .fill(near ? Color(red: 0.30, green: 0.48, blue: 0.85) : Color.black.opacity(0.85))
+                        .fill(near ? Color(white: 0.30) : Color(white: 0.10))
                         .frame(width: 84, height: 54)
                     RoundedRectangle(cornerRadius: 6, style: .continuous)
                         .strokeBorder(.white.opacity(0.18), lineWidth: 1)
@@ -280,14 +280,14 @@ struct LockPage: View {
             }
             .padding(.vertical, 6)
 
-            Text(near ? "手机在附近 —— 已解锁" : "手机走远 —— 已锁屏")
+            Text(near ? "设备在场 · 已解锁" : "设备远离 · 已锁屏")
                 .font(.system(size: 12, weight: .medium))
                 .foregroundStyle(near
-                                 ? Color(red: 0.42, green: 0.85, blue: 0.62)
-                                 : Color(red: 0.95, green: 0.62, blue: 0.42))
+                                 ? Color(white: 0.92)
+                                 : Color(white: 0.55))
                 .contentTransition(.opacity)
 
-            Text("两个强度阈值用来区分「在附近」和「走远了」，\n中间是缓冲区，避免信号抖动导致反复开关。")
+            Text("两个阈值分别对应「在场」与「离开」。\n中间区间留作缓冲，用于抑制信号波动引起的反复切换。")
                 .font(.system(size: 11))
                 .multilineTextAlignment(.center)
                 .foregroundStyle(.white.opacity(0.45))
@@ -315,7 +315,7 @@ struct ThresholdPage: View {
 
     var body: some View {
         VStack(spacing: 22) {
-            Text("拖一下试试")
+            Text("阈值")
                 .font(.system(size: 18, weight: .semibold)).foregroundStyle(.white)
 
             GlassCard(radius: 14, padding: 16) {
@@ -326,18 +326,18 @@ struct ThresholdPage: View {
                     )
                     HStack {
                         Text("锁屏 \(low) dBm").font(.system(size: 11)).monospacedDigit()
-                            .foregroundStyle(Color(red: 0.95, green: 0.62, blue: 0.42))
+                            .foregroundStyle(Color.white.opacity(0.55))
                         Spacer()
                         Text("解锁 \(high) dBm").font(.system(size: 11)).monospacedDigit()
-                            .foregroundStyle(Color(red: 0.42, green: 0.85, blue: 0.62))
+                            .foregroundStyle(Color.white.opacity(0.92))
                     }
-                    Text("越靠右越严格：要贴得很近才解锁。")
+                    Text("越靠右要求越严格，需更近才解锁。")
                         .font(.system(size: 10.5)).foregroundStyle(.white.opacity(0.45))
                 }
             }
             .frame(width: 340)
 
-            Text("设置里随时能改。默认 -60 / -85，适合大多数情况。")
+            Text("可随时在设置中调整，默认 -60 / -85。")
                 .font(.system(size: 11))
                 .multilineTextAlignment(.center)
                 .foregroundStyle(.white.opacity(0.45))
@@ -357,21 +357,21 @@ struct StarPage: View {
         VStack(spacing: 20) {
             Image(systemName: "star.fill")
                 .font(.system(size: 34, weight: .light))
-                .foregroundStyle(Color(red: 0.98, green: 0.82, blue: 0.35))
-                .shadow(color: Color(red: 0.98, green: 0.82, blue: 0.35).opacity(0.5), radius: 10)
+                .foregroundStyle(Color.white.opacity(0.92))
+                .shadow(color: Color.black.opacity(0.45), radius: 10, y: 2)
                 .scaleEffect(shown ? 1 : 0.7)
                 .animation(Motion.spring.delay(0.05), value: shown)
 
             VStack(spacing: 8) {
-                Text("就这些了")
+                Text("准备就绪")
                     .font(.system(size: 18, weight: .semibold)).foregroundStyle(.white)
-                Text("下一步去勾一个设备、设一次密码，就能用了。")
+                Text("接下来勾选信任设备并设置登录密码，即可开始使用。")
                     .font(.system(size: 12))
                     .foregroundStyle(.white.opacity(0.6))
             }
 
             VStack(spacing: 10) {
-                Text("这个项目是开源的，代码在 GitHub 上。\n如果它帮你省了些事，点个 Star 就好。")
+                Text("本项目开源，代码托管于 GitHub。\n若对你有帮助，欢迎 Star。")
                     .font(.system(size: 11))
                     .multilineTextAlignment(.center)
                     .foregroundStyle(.white.opacity(0.45))
@@ -382,7 +382,7 @@ struct StarPage: View {
                 } label: {
                     HStack(spacing: 6) {
                         Image(systemName: "star")
-                        Text("去 GitHub 点个 Star")
+                        Text("在 GitHub 上 Star")
                     }
                     .font(.system(size: 12, weight: .medium))
                     .padding(.horizontal, 16).padding(.vertical, 8)

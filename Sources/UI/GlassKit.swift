@@ -54,18 +54,15 @@ struct GlassSurface: ViewModifier {
 struct BrandBackground: View {
     var body: some View {
         ZStack {
+            // 中性石墨色，不用彩色。玻璃只需要一点明暗差，颜色交给内容本身。
             LinearGradient(
-                colors: [Color(red: 0.07, green: 0.08, blue: 0.16),
-                         Color(red: 0.13, green: 0.10, blue: 0.26),
-                         Color(red: 0.07, green: 0.09, blue: 0.17)],
-                startPoint: .topLeading, endPoint: .bottomTrailing)
-            // 左上角一团冷光，给玻璃一点折射素材
-            RadialGradient(
-                colors: [Color(red: 0.35, green: 0.55, blue: 1.0).opacity(0.22), .clear],
-                center: .init(x: 0.12, y: 0.05), startRadius: 10, endRadius: 420)
-            RadialGradient(
-                colors: [Color(red: 0.85, green: 0.35, blue: 1.0).opacity(0.16), .clear],
-                center: .init(x: 0.92, y: 0.95), startRadius: 10, endRadius: 420)
+                colors: [Color(white: 0.145),
+                         Color(white: 0.105)],
+                startPoint: .top, endPoint: .bottom)
+            // 顶部一道极淡的高光，模拟光源在窗口上方
+            LinearGradient(
+                colors: [Color.white.opacity(0.055), .clear],
+                startPoint: .top, endPoint: .center)
         }
     }
 }
@@ -118,9 +115,9 @@ struct MiniBars: View {
         return max(0, min(5, Int((t * 5).rounded())))
     }
     private var color: Color {
-        lit >= 4 ? Color(red: 0.29, green: 0.85, blue: 0.55)
-        : lit >= 2 ? Color(red: 0.95, green: 0.78, blue: 0.30)
-        : Color(red: 0.95, green: 0.52, blue: 0.30)
+        lit >= 4 ? Color(white: 0.90)
+        : lit >= 2 ? Color(white: 0.62)
+        : Color(white: 0.38)
     }
 
     var body: some View {
@@ -174,9 +171,7 @@ struct RangeSlider: View {
                 // 死区（中间那段）
                 Capsule()
                     .fill(LinearGradient(
-                        colors: [Color(red: 0.95, green: 0.52, blue: 0.30).opacity(0.55),
-                                 Color(red: 0.95, green: 0.78, blue: 0.30).opacity(0.35),
-                                 Color(red: 0.29, green: 0.85, blue: 0.55).opacity(0.55)],
+                        colors: [Color(white: 0.34), Color(white: 0.55), Color(white: 0.88)],
                         startPoint: .leading, endPoint: .trailing))
                     .frame(width: max(0, xHigh - xLow), height: 6)
                     .offset(x: xLow)
@@ -245,8 +240,8 @@ struct SignalGraph: View {
                     }
                     .stroke(style: StrokeStyle(lineWidth: 1, dash: [3, 3]))
                     .foregroundStyle(v == Double(unlock)
-                                     ? Color(red: 0.29, green: 0.85, blue: 0.55).opacity(0.55)
-                                     : Color(red: 0.95, green: 0.52, blue: 0.30).opacity(0.55))
+                                     ? Color(white: 0.88).opacity(0.75)
+                                     : Color(white: 0.38).opacity(0.75))
                 }
                 // 柱子
                 HStack(alignment: .bottom, spacing: slot - barW) {
@@ -256,8 +251,8 @@ struct SignalGraph: View {
                         RoundedRectangle(cornerRadius: barW / 2, style: .continuous)
                             .fill(v == nil ? Color.clear
                                   : (Double(v!) >= Double(unlock)
-                                     ? Color(red: 0.29, green: 0.85, blue: 0.55)
-                                     : Color(red: 0.95, green: 0.78, blue: 0.30).opacity(0.75)))
+                                     ? Color(white: 0.90)
+                                     : Color(white: 0.55)))
                             .frame(width: barW, height: max(1.5, h - top))
                     }
                 }

@@ -29,8 +29,11 @@ final class SettingsWindow: NSObject, NSWindowDelegate {
     }
 
     private func build() {
+        let host = NSHostingView(rootView: SettingsView())
+        let fit = host.fittingSize
+        let size = NSSize(width: max(700, fit.width), height: max(560, fit.height + 30))
         let w = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 700, height: 812),
+            contentRect: NSRect(origin: .zero, size: size),
             styleMask: [.titled, .closable, .miniaturizable, .fullSizeContentView],
             backing: .buffered,
             defer: false
@@ -41,9 +44,9 @@ final class SettingsWindow: NSObject, NSWindowDelegate {
         w.titlebarAppearsTransparent = true
         w.titleVisibility = .hidden
         w.isMovableByWindowBackground = true
-        w.backgroundColor = NSColor(srgbRed: 0.07, green: 0.08, blue: 0.16, alpha: 1)
+        w.backgroundColor = NSColor(white: 0.105, alpha: 1)
         w.isOpaque = false
-        w.contentView = NSHostingView(rootView: SettingsView())
+        w.contentView = host
         w.center()
 
         window = w

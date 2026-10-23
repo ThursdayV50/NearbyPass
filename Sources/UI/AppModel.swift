@@ -119,9 +119,9 @@ final class AppModel: ObservableObject {
 
     private static func dot(for p: PresenceState) -> Color {
         switch p {
-        case .present:  return Color(red: 0.29, green: 0.85, blue: 0.55)
-        case .deadzone: return Color(red: 0.95, green: 0.78, blue: 0.30)
-        case .absent:   return Color(red: 0.95, green: 0.42, blue: 0.38)
+        case .present:  return Color(white: 0.92)
+        case .deadzone: return Color(white: 0.62)
+        case .absent:   return Color(white: 0.42)
         case .unknown:  return .gray
         }
     }
