@@ -12,7 +12,7 @@
 
 ## 安装
 
-去 [Releases](https://github.com/ThursdayV50/NearbyPass/releases) 下载 zip，解压后把 `NearbyPass.app` 拖进「应用程序」。
+去 [Releases](https://github.com/ThursdayV50/NearbyPass/releases) 下载 dmg，打开后把 `NearbyPass` 拖到旁边的「应用程序」文件夹。
 
 没做 Apple 公证，第一次打开会被 Gatekeeper 拦。右键点图标 → 打开，确认一次就行。
 
