@@ -27,6 +27,7 @@ final class AppModel: ObservableObject {
     @Published var presenceDot: Color = .gray
     @Published var bestRSSI: Int? = nil
     @Published var paused = false
+    @Published var showInMenuBar = Settings.shared.showInMenuBar
 
     // 信号
     @Published var history: [Int?] = Array(repeating: nil, count: 60)
@@ -162,6 +163,12 @@ final class AppModel: ObservableObject {
     func setCooldown(_ v: Double) { Settings.shared.authCooldown = v; refresh() }
     func setDelay(_ v: Double) { Settings.shared.autoLockDelay = v; refresh() }
     func setPaused(_ v: Bool) { Settings.shared.paused = v; refresh() }
+
+    func setShowInMenuBar(_ v: Bool) {
+        Settings.shared.showInMenuBar = v
+        (NSApp.delegate as? AppDelegate)?.applyMenuBarVisibility()
+        refresh()
+    }
     func rescan() { PresenceMonitor.shared.rescan(); refresh() }
 
     /// 现在这一刻如果锁屏，会不会自动解锁

@@ -262,6 +262,15 @@ struct SettingsView: View {
                         sliderRow(title: "离开后延迟", value: "\(Int(m.delay)) 秒",
                                   binding: Binding(get: { m.delay }, set: { m.setDelay($0) }),
                                   range: 15 ... 300)
+                        Toggle("在菜单栏显示图标", isOn: Binding(
+                            get: { m.showInMenuBar },
+                            set: { m.setShowInMenuBar($0) }))
+                            .toggleStyle(.switch)
+                            .tint(Color(white: 0.62))
+                            .font(.system(size: 11.5))
+                        Text("隐藏后功能照常运行，重新打开 App 即可回到这里。")
+                            .font(.system(size: 10.5))
+                            .foregroundStyle(.secondary)
                     }
                     .padding(.top, 6)
                 } label: {

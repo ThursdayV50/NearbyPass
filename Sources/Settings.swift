@@ -26,6 +26,7 @@ final class Settings {
         static let hasCompletedOnboard  = "hasCompletedOnboard"
         static let deviceAliases        = "deviceAliases"
         static let learnedNames         = "learnedNames"
+        static let showInMenuBar        = "showInMenuBar"
     }
 
     private init() {
@@ -88,6 +89,15 @@ final class Settings {
     }
 
     /// 全局暂停（菜单栏一键）
+    /// 是否在菜单栏显示图标。关掉后后台功能照常，靠重新打开 App 进设置。
+    var showInMenuBar: Bool {
+        get {
+            if UserDefaults.standard.object(forKey: K.showInMenuBar) == nil { return true }
+            return UserDefaults.standard.bool(forKey: K.showInMenuBar)
+        }
+        set { UserDefaults.standard.set(newValue, forKey: K.showInMenuBar) }
+    }
+
     var paused: Bool {
         get { d.bool(forKey: K.paused) }
         set { d.set(newValue, forKey: K.paused) }

@@ -55,9 +55,9 @@ let lockURL = supportDir.appendingPathComponent("nearbypass.lock")
 let lockFD = open(lockURL.path, O_CREAT | O_RDWR, 0o644)
 if lockFD >= 0 {
     if flock(lockFD, LOCK_EX | LOCK_NB) != 0 {
-        FileHandle.standardError.write(
-            "NearbyPass 已在运行，本实例退出。\n".data(using: .utf8)!
-        )
+        DistributedNotificationCenter.default().post(
+            name: NSNotification.Name("com.lcg.nearbypass.showSettings"), object: nil)
+        usleep(150_000)
         exit(0)
     }
 }

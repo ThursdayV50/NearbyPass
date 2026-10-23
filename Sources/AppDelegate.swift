@@ -31,7 +31,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             reason: "锁屏后仍需持续采样蓝牙信号以判断人是否在附近")
         Log.info("辅助功能权限: \(AX.isTrusted ? "已授权" : "未授权")；密码: \(KeychainStore.shared.hasPassword() ? "已保存" : "未设置")")
 
-        buildMenu()
+        applyMenuBarVisibility()
+
+        // 关掉菜单栏图标后，重新打开 App 就是唯一入口：接收第二个实例的请求
+        DistributedNotificationCenter.default().addObserver(
+            self, selector: #selector(showSettingsFromOutside),
+            name: NSNotification.Name("com.lcg.nearbypass.showSettings"), object: nil)
 
         if let pw = KeychainStore.shared.load() {
             Log.shared.registerSecret(pw)
@@ -104,6 +109,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return i
     }
 
+    /// 按设置决定菜单栏图标在不在
+    func applyMenuBarVisibility() {
+        if Settings.shared.showInMenuBar {
+            guard statusItem == nil else { return }
+            buildMenu()
+            refreshStatus()
+            Log.info("菜单栏图标已显示")
+        } else {
+            guard let item = statusItem else {
+                Log.info("菜单栏图标已隐藏（本次启动不创建）")
+                return
+            }
+            NSStatusBar.system.removeStatusItem(item)
+            statusItem = nil
+            Log.info("菜单栏图标已隐藏")
+        }
+    }
+
     private func buildMenu() {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         statusItem.button?.title = "●"
@@ -169,10 +192,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         } else if let r = p.bestTrustedRSSI() {
             title += " \(r)"
         }
-        if statusItem.button?.title != title {
-            statusItem.button?.title = title
+        if let button = statusItem?.button, button.title != title {
+            button.title = title
         }
 
+        guard statusItem != nil else { return }
         presenceItem.title = "状态：\(p.presence.symbol) \(p.presence.rawValue)"
         sessionItem.title = "会话：\(SessionMonitor.shared.state.rawValue)"
         if let r = p.bestTrustedRSSI() {
@@ -278,6 +302,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         } else {
             alert.runModal()
         }
+    }
+
+    /// 没有可见窗口时再次打开 App（Dock 已在、菜单栏图标已隐藏）都会走到这里
+    func applicationShouldHandleReopen(_ sender: NSApplication,
+                                       hasVisibleWindows flag: Bool) -> Bool {
+        if !flag { openSettings() }
+        return true
+    }
+
+    @objc private func showSettingsFromOutside() {
+        applyMenuBarVisibility()
+        openSettings()
     }
 
     @objc private func quit() {
