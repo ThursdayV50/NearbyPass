@@ -158,26 +158,23 @@ final class AuthDialogHandler {
             guard bounds.width >= 200, bounds.width <= 700,
                   bounds.height >= 150, bounds.height <= 800 else { continue }
 
+            // 只认系统认证宿主。绝不因为"某个进程里有密码框"就当成授权弹窗——
+            // 浏览器页面里的密码输入框也会命中，那样在网页里打字就会误弹。
             let known = Self.authOwnerNames.contains(owner)
                 || Self.authOwnerNames.contains(title)
-            if known {
-                out.append(Win(pid: pid, bounds: bounds, number: num))
-                continue
-            }
-            if layer >= 1000 {
-                if !AX.secureFields(pid: pid).isEmpty {
-                    out.append(Win(pid: pid, bounds: bounds, number: num))
+            guard known else {
+                // 只记录一次候选，便于以后发现新的认证宿主；不采取任何动作
+                if bounds.width <= 520, bounds.height <= 520,
+                   !reportedOwners.contains(owner),
+                   !AX.secureFields(pid: pid).isEmpty {
+                    reportedOwners.insert(owner)
+                    Log.debug("忽略疑似窗口（非认证宿主）: \(owner) \(Int(bounds.width))x\(Int(bounds.height)) layer=\(layer)")
                 }
                 continue
             }
-            // layer < 1000 且宿主未知：只有尺寸落在弹窗区间时才去查 AX
-            // （System Settings 的 AX 树有 384+ 元素，不能无节制地遍历）
-            guard bounds.width <= 520, bounds.height <= 520 else { continue }
+
+            // 即便宿主在白名单里，也要求窗口里确实有密码框，避免把启动瞬间的空窗口当真
             guard !AX.secureFields(pid: pid).isEmpty else { continue }
-            if !reportedOwners.contains(owner) {
-                reportedOwners.insert(owner)
-                Log.info("发现未登记的认证弹窗宿主: \(owner) \(Int(bounds.width))x\(Int(bounds.height)) layer=\(layer)")
-            }
             out.append(Win(pid: pid, bounds: bounds, number: num))
         }
         return out
