@@ -34,7 +34,7 @@ struct SettingsView: View {
         Group {
             if measured {
                 content
-                    .frame(width: 700)
+                    .frame(width: 515)
                     .fixedSize(horizontal: false, vertical: true)
             } else {
                 normal
@@ -45,12 +45,17 @@ struct SettingsView: View {
     private var normal: some View {
         VStack(spacing: 0) {
             header
-            ScrollView(.vertical, showsIndicators: false) {
-                content
+            HStack(spacing: 0) {
+                FieldPane()
+                    .frame(width: 344)
+                Rectangle().fill(Theme.hair2).frame(width: 1)
+                ScrollView(.vertical, showsIndicators: false) {
+                    content
+                }
             }
             footer
         }
-        .frame(width: 700)
+        .frame(width: 860)
         .sheet(item: $renameTarget) { d in
             renameSheet(d)
         }
@@ -168,7 +173,7 @@ struct SettingsView: View {
     // MARK: - 阈值
 
     private var thresholdSection: some View {
-        Section(title: "强度阈值", note: m.unlockPrediction.text, noteIsSignal: m.unlockPrediction.ok) {
+        Section(title: "强度阈值", note: "主设备信号") {
             VStack(alignment: .leading, spacing: 12) {
                 thresholdRow(
                     title: "解锁强度",
@@ -182,21 +187,9 @@ struct SettingsView: View {
                     value: Binding(get: { m.lockThreshold },
                                    set: { v in m.setThresholds(low: v, high: m.unlockThreshold) })
                 )
-                HStack(alignment: .firstTextBaseline, spacing: 6) {
-                    Text("迟滞区间")
-                        .font(Theme.text(10.5))
-                        .foregroundStyle(Theme.ink3)
-                    Text("\(abs(m.unlockThreshold - m.lockThreshold))")
-                        .font(Theme.mono(12, .semibold))
-                        .foregroundStyle(Theme.ink)
-                    Text("dB")
-                        .font(Theme.mono(9))
-                        .foregroundStyle(Theme.ink3)
-                    Spacer(minLength: 6)
-                    Text("两环之间不触发任何动作，避免在边界来回抖")
-                        .font(Theme.text(10))
-                        .foregroundStyle(Theme.ink3)
-                }
+                Text("两环之间不触发任何动作，避免在边界来回抖。")
+                    .font(Theme.text(10))
+                    .foregroundStyle(Theme.ink3)
             }
         }
     }

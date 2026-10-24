@@ -25,6 +25,7 @@ final class AppModel: ObservableObject {
 
     // 顶部
     @Published var presenceText: String = "未知"
+    @Published var presenceState: PresenceState = .unknown
     @Published var presenceDot: Color = .gray
     @Published var bestRSSI: Int? = nil
     @Published var paused = false
@@ -83,6 +84,7 @@ final class AppModel: ObservableObject {
         let p = PresenceMonitor.shared
 
         presenceText = p.presence.rawValue
+        presenceState = p.presence
         presenceDot = Self.dot(for: p.presence)
         bestRSSI = p.bestTrustedRSSI()
         paused = s.paused
