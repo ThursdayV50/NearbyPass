@@ -135,8 +135,25 @@ struct SettingsView: View {
         GlassCard {
             VStack(alignment: .leading, spacing: 8) {
                 CardTitle(text: "设备", note: "勾选即视为在场 · ★ 为主设备")
+                HStack(spacing: 8) {
+                    Toggle(isOn: Binding(get: { m.wearableOnly },
+                                         set: { m.setWearableOnly($0) })) {
+                        Text("只看手机 / 手表 / 手环")
+                            .font(.system(size: 11))
+                    }
+                    .toggleStyle(.switch)
+                    .controlSize(.mini)
+                    Spacer(minLength: 6)
+                    if m.hiddenDeviceCount > 0 {
+                        Text("已隐藏 \(m.hiddenDeviceCount) 个")
+                            .font(.system(size: 10.5))
+                            .foregroundStyle(.secondary)
+                    }
+                }
                 if m.devices.isEmpty {
-                    Text("正在扫描…")
+                    Text(m.hiddenDeviceCount > 0
+                         ? "没有随身设备（已隐藏 \(m.hiddenDeviceCount) 个）"
+                         : "正在扫描…")
                         .font(.system(size: 11.5))
                         .foregroundStyle(.secondary)
                         .frame(maxWidth: .infinity, alignment: .center)
@@ -150,6 +167,17 @@ struct SettingsView: View {
                         }
                     }
                     .frame(maxHeight: 224)
+                }
+                if m.primaryIsWeak {
+                    HStack(spacing: 5) {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .font(.system(size: 10))
+                            .foregroundStyle(.orange)
+                        Text("主设备不是随身设备，人离开时可能不会自动锁屏")
+                            .font(.system(size: 10.5))
+                            .foregroundStyle(.orange)
+                        Spacer(minLength: 0)
+                    }
                 }
                 HStack {
                     Button {
@@ -197,6 +225,15 @@ struct SettingsView: View {
 
             if d.resolving {
                 ProgressView().controlSize(.small).scaleEffect(0.6)
+            }
+
+            if !d.kind.isPresenceCapable {
+                Text(d.kind.badge)
+                    .font(.system(size: 9))
+                    .padding(.horizontal, 4)
+                    .padding(.vertical, 1)
+                    .background(Color.secondary.opacity(0.16), in: Capsule())
+                    .foregroundStyle(.secondary)
             }
 
             Spacer(minLength: 6)

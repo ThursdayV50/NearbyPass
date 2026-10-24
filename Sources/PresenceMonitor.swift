@@ -17,6 +17,8 @@ struct DeviceReading {
     var emaRSSI: Double            // 指数滑动平均
     var lastSeen: Date
     var history: [Int?]            // 最近 60 秒，每秒一个采样；nil = 该秒无信号
+    /// 广播里出现过的服务号（小写），用来判断这是手机/手环还是鼠标键盘
+    var serviceUUIDs: Set<String> = []
 }
 
 /// 在场状态（四态，含死区）
@@ -184,6 +186,12 @@ final class PresenceMonitor: NSObject {
     func isFresh(_ id: String) -> Bool {
         guard let d = devices[id] else { return false }
         return Date().timeIntervalSince(d.lastSeen) < freshWindow
+    }
+
+    /// 设备类别：决定它该不该出现在「设备」列表里（鼠标键盘不能代表"人在场"）
+    func kind(_ id: String) -> DeviceKind {
+        guard let d = devices[id] else { return .unknown }
+        return DeviceClassifier.classify(name: displayName(id), serviceUUIDs: d.serviceUUIDs)
     }
 
     /// 某设备当前可用的平滑 RSSI；不新鲜则返回 nil
@@ -389,6 +397,11 @@ extension PresenceMonitor: CBCentralManagerDelegate {
         let advName = advertisementData[CBAdvertisementDataLocalNameKey] as? String
         let name = (advName?.isEmpty == false ? advName! : (peripheral.name ?? "未知设备"))
 
+        // 广播包和 scan response 是分开来的：有的包带服务号、有的不带。
+        // 所以对同一台设备按并集累积，不要用后到的空包覆盖掉已知信息。
+        let uuids = Set(((advertisementData[CBAdvertisementDataServiceUUIDsKey] as? [CBUUID]) ?? [])
+            .map { $0.uuidString.lowercased() })
+
         peripherals[id] = peripheral
 
         let now = Date()
@@ -396,6 +409,7 @@ extension PresenceMonitor: CBCentralManagerDelegate {
             existing.rawRSSI = rssi
             existing.emaRSSI = alpha * Double(rssi) + (1 - alpha) * existing.emaRSSI
             existing.lastSeen = now
+            existing.serviceUUIDs.formUnion(uuids)
             // 设备改名后广播名会变，只要新名字不是随机串就跟着更新
             if name != "未知设备", !Self.looksRandom(name) {
                 existing.name = name
@@ -409,7 +423,8 @@ extension PresenceMonitor: CBCentralManagerDelegate {
                 rawRSSI: rssi,
                 emaRSSI: Double(rssi),
                 lastSeen: now,
-                history: Array(repeating: nil, count: historyLength)
+                history: Array(repeating: nil, count: historyLength),
+                serviceUUIDs: uuids
             )
             Log.debug("发现新设备 \(name) (\(id.prefix(8))) rssi=\(rssi)")
         }

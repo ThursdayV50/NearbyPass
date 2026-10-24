@@ -16,6 +16,7 @@ struct DeviceVM: Identifiable, Equatable {
     var primary: Bool
     var unknownName: Bool
     var resolving: Bool
+    var kind: DeviceKind = .unknown
 }
 
 @MainActor
@@ -35,6 +36,10 @@ final class AppModel: ObservableObject {
     // 设备
     @Published var devices: [DeviceVM] = []
     @Published var trustedCount = 0
+    @Published var hiddenDeviceCount = 0
+    @Published var wearableOnly = Settings.shared.wearableOnly
+    /// 主设备不是手机/手环（例如被设成了键盘），自动锁屏会失效
+    @Published var primaryIsWeak = false
 
     // 阈值
     @Published var unlockThreshold = Settings.shared.unlockThreshold
@@ -90,7 +95,7 @@ final class AppModel: ObservableObject {
             history = Array(repeating: nil, count: 60)
         }
 
-        devices = p.allDevices().map { d in
+        let all: [DeviceVM] = p.allDevices().map { d in
             let age = Date().timeIntervalSince(d.lastSeen)
             let live = p.isFresh(d.id) ? d.rawRSSI : nil
             let shown: Int? = live ?? (age < p.staleThreshold ? Int(d.emaRSSI.rounded()) : nil)
@@ -102,8 +107,27 @@ final class AppModel: ObservableObject {
                 trusted: s.isTrusted(d.id),
                 primary: s.primaryDeviceID == d.id,
                 unknownName: p.isUnknownName(d.id),
-                resolving: p.isResolvingName(d.id)
+                resolving: p.isResolvingName(d.id),
+                kind: p.kind(d.id)
             )
+        }
+
+        // 只留随身设备；已勾选的和当前主设备无论何时都保留，
+        // 否则一旦被过滤掉，用户就没有入口取消勾选了。
+        let filterOn = s.wearableOnly
+        let visible = filterOn
+            ? all.filter { $0.kind.isPresenceCapable || $0.trusted || $0.primary }
+            : all
+        // 随身设备排在前面，其余保持原有相对顺序（不按 RSSI 排，避免行每秒跳动）
+        devices = visible.filter { $0.kind.isPresenceCapable }
+                + visible.filter { !$0.kind.isPresenceCapable }
+        hiddenDeviceCount = all.count - visible.count
+        wearableOnly = filterOn
+
+        if let pid = s.primaryDeviceID, p.device(pid) != nil {
+            primaryIsWeak = !p.kind(pid).isPresenceCapable
+        } else {
+            primaryIsWeak = false
         }
         trustedCount = s.trustedDeviceIDs.count
 
@@ -142,6 +166,11 @@ final class AppModel: ObservableObject {
     func setPrimary(_ id: String) {
         Settings.shared.primaryDeviceID = id
         if !Settings.shared.isTrusted(id) { Settings.shared.setTrusted(id, true) }
+        refresh()
+    }
+
+    func setWearableOnly(_ on: Bool) {
+        Settings.shared.wearableOnly = on
         refresh()
     }
 

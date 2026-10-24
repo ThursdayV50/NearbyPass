@@ -14,7 +14,7 @@ cd "$ROOT" || exit 1
 
 APP="NearbyPass"
 BID="com.lcg.nearbypass"
-VER="1.2.8"
+VER="1.2.9"
 BUILD="$ROOT/.build"
 CACHE="$ROOT/.cache"
 OUT="$BUILD/$APP.app"

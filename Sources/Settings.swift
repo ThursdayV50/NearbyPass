@@ -27,6 +27,7 @@ final class Settings {
         static let deviceAliases        = "deviceAliases"
         static let learnedNames         = "learnedNames"
         static let showInMenuBar        = "showInMenuBar"
+        static let wearableOnly         = "wearableOnly"
     }
 
     private init() {
@@ -40,7 +41,8 @@ final class Settings {
             K.authCooldown: 15.0,
             K.trustedDeviceIDs: [String](),
             K.paused: false,
-            K.hasCompletedOnboard: false
+            K.hasCompletedOnboard: false,
+            K.wearableOnly: true
         ])
     }
 
@@ -118,6 +120,13 @@ final class Settings {
     }
 
     // MARK: - 设备
+
+    /// 设备列表只显示手机 / 手表 / 手环这类随身设备（默认开）。
+    /// 鼠标键盘永远躺在桌上，选它当在场判据会让自动锁屏永远不触发。
+    var wearableOnly: Bool {
+        get { (d.object(forKey: K.wearableOnly) as? Bool) ?? true }
+        set { d.set(newValue, forKey: K.wearableOnly) }
+    }
 
     /// 信任设备（CBPeripheral.identifier.uuidString）—— 任一在场即视为"人在"
     var trustedDeviceIDs: [String] {
