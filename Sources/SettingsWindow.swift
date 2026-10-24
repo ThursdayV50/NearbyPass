@@ -53,7 +53,8 @@ final class SettingsWindow: NSObject, NSWindowDelegate {
         w.titlebarAppearsTransparent = true
         w.titleVisibility = .hidden
         w.isMovableByWindowBackground = true
-        w.backgroundColor = NSColor(white: 0.105, alpha: 1)
+        w.appearance = NSAppearance(named: .aqua)          // 这套配色是浅色专用的
+        w.backgroundColor = NSColor(srgbRed: 0.957, green: 0.961, blue: 0.965, alpha: 1)
         w.isOpaque = false
         // 用一层普通 NSView 兜住，确保 SwiftUI 拿到的是窗口的最终尺寸，
         // 而不是内容自然高度（否则 ScrollView 会按底部对齐显示）

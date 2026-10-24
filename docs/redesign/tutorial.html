@@ -1,0 +1,615 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>NearbyPass · 首次启动</title>
+<style>
+:root{
+  --paper:#E7EAEB; --sheet:#F4F5F6; --sheet2:#FBFBFC;
+  --ink:#15191B; --ink-2:#4C5359; --ink-3:#8A9197;
+  --hair:rgba(20,24,26,.10); --hair-2:rgba(20,24,26,.055);
+  --signal:#8B5E00; --signal-2:rgba(154,106,0,.16);
+  --away:#A4462F;
+  --r-s:5px; --r-m:9px; --r-l:13px;
+  --t-fast:140ms;
+  --e-out:cubic-bezier(.23,1,.32,1);
+  --e-move:cubic-bezier(.77,0,.175,1);
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%}
+body{
+  background:var(--paper); color:var(--ink);
+  font:400 13px/1.55 -apple-system,"SF Pro Text",system-ui,sans-serif;
+  -webkit-font-smoothing:antialiased;
+  display:flex; align-items:center; justify-content:center; padding:24px;
+}
+.win{
+  width:668px; height:648px; background:var(--sheet);
+  border:1px solid var(--hair); border-radius:var(--r-l);
+  box-shadow:0 1px 0 rgba(255,255,255,.9) inset, 0 18px 44px -22px rgba(20,24,26,.35);
+  display:grid; grid-template-rows:auto 1fr auto; overflow:hidden;
+}
+
+/* ---------- 页眉 ---------- */
+header{display:flex; align-items:baseline; gap:12px; padding:22px 26px 0}
+.brand{
+  font:600 11px/1 "SF Pro Text",system-ui,sans-serif; letter-spacing:.10em;
+  text-transform:uppercase; color:var(--ink-3);
+}
+.stepno{
+  margin-left:auto; font:400 11.5px/1 "SF Mono",ui-monospace,monospace;
+  color:var(--ink-3); font-variant-numeric:tabular-nums;
+}
+.skip{
+  font:400 11.5px/1 inherit; color:var(--ink-3); background:none; border:0;
+  padding:6px 2px; cursor:pointer; border-radius:var(--r-s);
+}
+.skip:hover{color:var(--ink-2)}
+
+/* ---------- 主体 ---------- */
+main{padding:8px 26px 0; position:relative; display:grid}
+.stage{
+  grid-area:1/1; display:grid; grid-template-rows:auto 1fr auto; gap:6px;
+  align-content:start;
+  transition:opacity 200ms var(--e-out);
+}
+.panel{grid-area:1/1; display:none; flex-direction:column; gap:0; padding-top:14px}
+body[data-step="2"] .panel[data-p="2"],
+body[data-step="4"] .panel[data-p="4"],
+body[data-step="5"] .panel[data-p="5"]{display:flex}
+body[data-step="2"] .stage,
+body[data-step="4"] .stage,
+body[data-step="5"] .stage{opacity:0; pointer-events:none}
+
+h1{
+  font:500 21px/1.28 "Avenir Next","SF Pro Text",system-ui,sans-serif;
+  letter-spacing:-.012em; max-width:22em; margin-bottom:7px;
+}
+.lede{color:var(--ink-2); font-size:12.5px; max-width:30em; margin-bottom:18px}
+
+/* 步骤内的标题 */
+.hd{display:none; padding-top:14px}
+body[data-step="1"] .hd[data-h="1"],
+body[data-step="3"] .hd[data-h="3"]{display:block}
+.hd .lede{margin-bottom:0}
+
+/* ---------- 距离场 ---------- */
+.scope{
+  display:grid; place-items:center; min-height:0;
+  grid-template-rows:1fr;
+}
+svg{width:352px; height:352px; overflow:visible; display:block}
+#rings{transform-origin:170px 170px}
+.ready #rings{animation:in 700ms var(--e-out) both}
+@keyframes in{from{opacity:0; transform:scale(.965)}to{opacity:1; transform:scale(1)}}
+
+.gring{fill:none; stroke:var(--hair-2); stroke-width:1}
+.tband{
+  fill:none; stroke:var(--signal-2); stroke-width:9;
+  transition:r 420ms var(--e-out), stroke-width 420ms var(--e-out), opacity 260ms linear;
+  animation:breathe 5.6s ease-in-out infinite;
+}
+@keyframes breathe{0%,100%{opacity:.55}50%{opacity:1}}
+.tring{
+  fill:none; stroke:var(--signal); stroke-width:1.6;
+  transition:r 420ms var(--e-out);
+}
+.rl{
+  fill:var(--signal); font:500 10.5px/1 "SF Mono",ui-monospace,monospace;
+  letter-spacing:.01em; font-variant-numeric:tabular-nums;
+}
+.ghost{fill:var(--ink); opacity:.16}
+.host{fill:none; stroke:rgba(20,24,26,.46); stroke-width:1.25;
+  stroke-linecap:round; stroke-linejoin:round; vector-effect:non-scaling-stroke}
+#host .gl[hidden]{display:none}
+
+.dev{cursor:default}
+.dev .pt{fill:var(--ink); transition:fill 260ms linear}
+.dev .halo{fill:none; stroke:var(--ink); stroke-width:1; opacity:.14}
+.dev.is-away .pt{fill:var(--away)}
+.dev.is-away .halo{stroke:var(--away)}
+.dev .lbl{fill:var(--ink); font:500 11px/1 "SF Pro Text",system-ui,sans-serif}
+.dev .sub{fill:var(--ink-3); font:400 10px/1 "SF Mono",ui-monospace,monospace;
+  font-variant-numeric:tabular-nums}
+#dev{transform-box:view-box; transition:transform 120ms linear}
+.pulse{
+  fill:none; stroke:var(--signal); stroke-width:1.4; opacity:0;
+}
+.pulse.go{animation:pulse 620ms var(--e-out) 1}
+@keyframes pulse{0%{opacity:.75; r:8}100%{opacity:0; r:34}}
+
+/* ---------- 说明文字 ---------- */
+.cap{
+  display:grid; grid-template-columns:1fr auto auto; gap:12px; align-items:center;
+  min-height:42px; padding:0 2px 6px;
+}
+.caption{font-size:12.5px; color:var(--ink-2); min-height:34px}
+.caption b{color:var(--ink); font-weight:600}
+.cd{
+  width:112px; height:3px; background:var(--hair); border-radius:2px; overflow:hidden;
+  opacity:0; transition:opacity 200ms linear;
+}
+.cd.on{opacity:1}
+.cd i{
+  display:block; height:100%; width:100%; background:var(--signal);
+  transform:scaleX(0); transform-origin:left center;
+  transition:transform 120ms linear;
+}
+.replay{
+  font:500 11.5px/1 inherit; color:var(--ink-2); background:var(--sheet2);
+  border:1px solid var(--hair); border-radius:999px; padding:7px 13px;
+  cursor:pointer; transition:transform var(--t-fast) var(--e-out), color var(--t-fast);
+}
+.replay:hover{color:var(--ink); transform:translateY(-1px)}
+.replay:active{transform:scale(.97)}
+
+/* ---------- 列表 / 行 ---------- */
+.row{
+  display:flex; align-items:center; gap:12px; padding:13px 2px;
+  border-top:1px solid var(--hair-2);
+}
+.row:first-of-type{border-top:0}
+.row .grow{flex:1; min-width:0}
+.row .nm{font-size:13px; font-weight:500}
+.row .mt{font:400 10.5px/1.5 "SF Mono",ui-monospace,monospace; color:var(--ink-3);
+  font-variant-numeric:tabular-nums; margin-top:3px}
+.chip{
+  font:500 10px/1 "SF Pro Text",system-ui,sans-serif; letter-spacing:.02em;
+  color:var(--ink-2); border:1px solid var(--hair); border-radius:999px; padding:4px 7px;
+}
+.chip.on{color:var(--signal); border-color:rgba(139,94,0,.34); background:var(--signal-2)}
+.star{color:var(--signal); font-size:12px}
+.pick{
+  appearance:none; width:17px; height:17px; border-radius:50%; position:relative;
+  border:1.4px solid rgba(20,24,26,.30); background:none; cursor:pointer; flex:none;
+  transition:border-color 120ms linear, background 120ms linear;
+}
+.pick:hover{border-color:rgba(20,24,26,.55)}
+.pick:checked{border-color:var(--ink); background:var(--ink)}
+.pick:checked::after{
+  content:""; position:absolute; left:5px; top:1.6px; width:3.6px; height:7.6px;
+  border:1.8px solid var(--sheet); border-top:0; border-left:0;
+  transform:rotate(38deg);
+}
+.starbtn{
+  appearance:none; border:0; background:none; cursor:pointer; padding:0;
+  width:28px; height:28px; display:grid; place-items:center; border-radius:50%;
+  color:rgba(20,24,26,.24);
+  transition:color 140ms var(--e-out), background-color 140ms var(--e-out),
+             transform 140ms var(--e-out);
+}
+.starbtn:hover{color:rgba(20,24,26,.5); background:rgba(20,24,26,.05)}
+.starbtn:active{transform:scale(.92)}
+.starbtn[aria-pressed="true"]{color:var(--signal)}
+.star-ic{width:16px;height:16px;display:block;fill:none;stroke:currentColor;
+  stroke-width:1.7;stroke-linejoin:round;stroke-linecap:round}
+.starbtn[aria-pressed="true"] .star-ic{fill:currentColor;stroke-width:1.1}
+.drow{display:grid; grid-template-columns:auto 1fr auto auto; align-items:center;
+  gap:12px; padding:13px 2px; border-top:1px solid var(--hair-2)}
+.drow:first-of-type{border-top:0}
+.howto{font-size:11.5px; color:var(--ink-3); padding-top:12px; border-top:1px solid var(--hair-2);
+  margin-top:auto}
+
+/* ---------- 滑杆 ---------- */
+.sliders{display:grid; gap:13px; padding:0 2px 10px}
+.slhint{font-size:10.5px; color:var(--ink-3); line-height:1.5; margin-top:-2px}
+.sliders[hidden]{display:none}
+.sl{display:grid; grid-template-columns:74px 1fr 62px; align-items:center; gap:12px}
+.sl label{font-size:12px; color:var(--ink-2)}
+.sl output{font:500 11.5px/1 "SF Mono",ui-monospace,monospace; color:var(--ink);
+  text-align:right; font-variant-numeric:tabular-nums}
+input[type=range]{
+  appearance:none; height:3px; border-radius:2px; background:var(--hair); width:100%;
+  cursor:pointer;
+}
+input[type=range]::-webkit-slider-thumb{
+  appearance:none; width:14px; height:14px; border-radius:50%;
+  background:var(--sheet); border:1.6px solid var(--ink);
+  box-shadow:0 1px 2px rgba(20,24,26,.18);
+  transition:transform var(--t-fast) var(--e-out);
+}
+input[type=range]:active::-webkit-slider-thumb{transform:scale(1.14)}
+
+/* ---------- 权限 / 开关 ---------- */
+.perm{display:flex; align-items:center; gap:10px; padding:11px 2px;
+  border-top:1px solid var(--hair-2); font-size:12.5px}
+.perm:first-of-type{border-top:0}
+.dot{width:6px; height:6px; border-radius:50%; background:var(--signal); flex:none}
+.dot.wait{background:var(--ink-3)}
+.perm .st{margin-left:auto; font:400 11px/1 "SF Mono",ui-monospace,monospace; color:var(--ink-3)}
+.sw{appearance:none; width:34px; height:20px; border-radius:999px; flex:none;
+  background:rgba(20,24,26,.16); position:relative; cursor:pointer;
+  transition:background 180ms linear}
+.sw::after{content:""; position:absolute; inset:2px auto 2px 2px; width:16px;
+  border-radius:50%; background:#fff; box-shadow:0 1px 2px rgba(20,24,26,.28);
+  transition:transform 180ms var(--e-out)}
+.sw:checked{background:#3A4145}
+.sw:checked::after{transform:translateX(14px)}
+
+/* ---------- 页脚 ---------- */
+footer{
+  display:flex; align-items:center; gap:10px; padding:16px 26px 20px;
+  border-top:1px solid var(--hair-2);
+}
+.dots{display:flex; gap:6px; align-items:center}
+.dots span{width:5px; height:5px; border-radius:50%; background:rgba(20,24,26,.18);
+  transition:background 200ms linear, width 200ms var(--e-out)}
+.dots span.on{background:var(--ink); width:14px; border-radius:3px}
+.spacer{flex:1}
+.btn{
+  font:500 12.5px/1 inherit; padding:9px 16px; border-radius:var(--r-m); cursor:pointer;
+  border:1px solid var(--hair); background:var(--sheet2); color:var(--ink-2);
+  transition:transform var(--t-fast) var(--e-out), color var(--t-fast) linear;
+}
+.btn:hover{color:var(--ink); transform:translateY(-1px)}
+.btn:active{transform:scale(.975)}
+.btn.primary{
+  background:#2B3134; color:#F3F4F5; border-color:#2B3134;
+  box-shadow:0 1px 0 rgba(255,255,255,.14) inset;
+}
+.btn.primary:hover{background:#22282B}
+.btn[disabled]{opacity:.4; pointer-events:none}
+@media (prefers-reduced-motion:reduce){
+  *{animation-duration:1ms !important; transition-duration:1ms !important}
+}
+</style>
+</head>
+<body data-step="1">
+<div class="win">
+
+  <header>
+    <span class="brand">NearbyPass</span>
+    <span class="stepno" id="stepno">01 / 05</span>
+    <button class="skip" id="skip">跳过</button>
+  </header>
+
+  <main>
+    <!-- ===== 舞台：距离场（步骤 1、3 用） ===== -->
+    <div class="stage">
+      <div class="hd" data-h="1">
+        <h1>它现在知道你在不在</h1>
+        <p class="lede">这台机器能感觉到你口袋里的手机。看一遍它是怎么判断的。</p>
+      </div>
+      <div class="hd" data-h="3">
+        <h1>把两个环放到 <span id="nameTitle">Xiaomi 17</span> 身上</h1>
+        <p class="lede">左环是「人回来就解锁」，右环是「人走开就锁屏」。拖一下，看看场怎么应。</p>
+      </div>
+      <div class="scope">
+        <svg id="svg" viewBox="0 0 340 340" role="img" aria-label="距离场：两个同心环分别表示解锁与锁屏强度">
+          <g class="rings" id="rings">
+            <circle class="gring" cx="170" cy="170" r="42"/>
+            <circle class="gring" cx="170" cy="170" r="86"/>
+            <circle class="gring" cx="170" cy="170" r="164"/>
+            <circle class="tband" id="band" cx="170" cy="170" r="120"/>
+            <circle class="tring" id="rUnlock" cx="170" cy="170" r="112"/>
+            <circle class="tring" id="rLock" cx="170" cy="170" r="126"/>
+            <circle class="pulse" id="pulse" cx="170" cy="170" r="8"/>
+            <text class="rl" id="lUnlock">解锁 −60</text>
+            <text class="rl" id="lLock">锁屏 −85</text>
+            <circle class="ghost" cx="74" cy="232" r="2.5"/>
+            <circle class="ghost" cx="262" cy="246" r="2.5"/>
+            <circle class="ghost" cx="238" cy="112" r="2"/>
+            <g class="dev" id="dev">
+              <circle class="halo" cx="0" cy="0" r="9"/>
+              <circle class="pt" cx="0" cy="0" r="4"/>
+              <text class="lbl" x="10" y="3.5" id="devLbl">Xiaomi 17</text>
+              <text class="sub" x="10" y="15" id="devSub">−58 dBm</text>
+            </g>
+            <g id="host" transform="translate(170 170) scale(1.25)">
+              <g class="host gl" data-host="mini">
+                <rect x="-16" y="-7" width="32" height="10.5" rx="2.4"/>
+                <path d="M-4.5 0.6h9"/>
+                <path d="M-12 5.6h7.5M4.5 5.6h7.5" opacity=".5"/>
+              </g>
+              <g class="host gl" data-host="laptop" hidden>
+                <rect x="-11.5" y="-11" width="23" height="14" rx="1.8"/>
+                <path d="M-15.5 3.2h31l-2 2.8h-27z"/>
+                <path d="M-2.6 3.2h5.2" opacity=".55"/>
+              </g>
+              <g class="host gl" data-host="imac" hidden>
+                <rect x="-13" y="-11.5" width="26" height="17.5" rx="2.2"/>
+                <path d="M-13 1.6h26" opacity=".55"/>
+                <path d="M-2.2 6h4.4l1.5 3.3h-7.4z"/>
+                <path d="M-8 9.3h16"/>
+              </g>
+              <g class="host gl" data-host="studio" hidden>
+                <rect x="-13" y="-8.5" width="26" height="17" rx="2.4"/>
+                <circle cx="-7.5" cy="2.6" r="1"/><circle cx="-4" cy="2.6" r="1"/>
+                <path d="M0.5 2.6h8" opacity=".6"/><path d="M-9.5 -3.6h19" opacity=".4"/>
+              </g>
+              <g class="host gl" data-host="pro" hidden>
+                <rect x="-8.5" y="-13" width="17" height="26" rx="2.2"/>
+                <circle cx="0" cy="1.5" r="3.4"/><path d="M-8.5 7.5h17" opacity=".45"/>
+              </g>
+            </g>
+          </g>
+        </svg>
+      </div>
+
+      <!-- 步骤 3 的滑杆 -->
+      <div class="sliders" id="sliders" hidden>
+        <div class="sl">
+          <label for="sUnlock">解锁强度</label>
+          <input type="range" id="sUnlock" min="-95" max="-40" step="1" value="-60">
+          <output id="oUnlock">−60 dBm</output>
+        </div>
+        <div class="sl">
+          <label for="sLock">锁屏强度</label>
+          <input type="range" id="sLock" min="-95" max="-40" step="1" value="-85">
+          <output id="oLock">−85 dBm</output>
+        </div>
+        <div class="sl">
+          <label for="sDelay">判定延迟</label>
+          <input type="range" id="sDelay" min="15" max="300" step="5" value="45">
+          <output id="oDelay">45 秒</output>
+        </div>
+        <p class="slhint">信号要持续弱于锁屏环这么久，才会真的锁屏——防的是你起身倒水。</p>
+      </div>
+
+      <div class="cap" id="cap">
+        <div class="caption" id="caption"></div>
+        <div class="cd" id="cd"><i id="cdBar"></i></div>
+        <button class="replay" id="replay">再看一次</button>
+      </div>
+    </div>
+
+    <!-- ===== 步骤 2：选设备 ===== -->
+    <div class="panel" data-p="2">
+      <h1>挑一台一直跟着你的设备</h1>
+      <p class="lede">手机、手表、手环都行。它在你身上，电脑就知道你在。</p>
+      <div class="drow">
+        <input class="pick" type="checkbox" checked data-trust="xiaomi17">
+        <div class="grow">
+          <div class="nm">Xiaomi 17</div>
+          <div class="mt">−58 dBm · 刚刚</div>
+        </div>
+        <span class="chip">随身</span>
+        <button class="starbtn" data-primary="xiaomi17" data-name="Xiaomi 17" aria-pressed="true" title="主设备：解锁和锁屏只认这一台"><svg class="star-ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3.9l2.55 5.4 5.9.82-4.28 4.13 1.03 5.85L12 17.32l-5.2 2.78 1.03-5.85L3.55 10.1l5.9-.82z"/></svg></button>
+      </div>
+      <div class="drow">
+        <input class="pick" type="checkbox" checked data-trust="band10">
+        <div class="grow">
+          <div class="nm">Xiaomi Smart Band 10</div>
+          <div class="mt">−71 dBm · 12 秒前</div>
+        </div>
+        <span class="chip">随身</span>
+        <button class="starbtn" data-primary="band10" data-name="Xiaomi Smart Band 10" aria-pressed="false" title="设为主设备：解锁和锁屏只认这一台"><svg class="star-ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3.9l2.55 5.4 5.9.82-4.28 4.13 1.03 5.85L12 17.32l-5.2 2.78 1.03-5.85L3.55 10.1l5.9-.82z"/></svg></button>
+      </div>
+      <div class="drow">
+        <input class="pick" type="checkbox" data-trust="keepb4">
+        <div class="grow">
+          <div class="nm">KeepB4-50</div>
+          <div class="mt">−84 dBm · 1 分钟前</div>
+        </div>
+        <span class="chip">随身</span>
+        <button class="starbtn" data-primary="keepb4" data-name="KeepB4-50" aria-pressed="false" title="设为主设备：解锁和锁屏只认这一台"><svg class="star-ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3.9l2.55 5.4 5.9.82-4.28 4.13 1.03 5.85L12 17.32l-5.2 2.78 1.03-5.85L3.55 10.1l5.9-.82z"/></svg></button>
+      </div>
+      <p class="howto">勾选 = 它在附近就算你在场，可以勾多台。星标 = 只认这一台来解锁和锁屏，只能选一台。</p>
+    </div>
+
+    <!-- ===== 步骤 4：权限 ===== -->
+    <div class="panel" data-p="4">
+      <h1>给它一次动手的许可</h1>
+      <p class="lede">填系统弹窗、按锁屏密码都需要辅助功能权限。密钥只存在你自己的钥匙串里。</p>
+      <div class="perm"><span class="dot"></span>辅助功能<span class="st">已授权</span></div>
+      <div class="perm"><span class="dot"></span>蓝牙<span class="st">已授权</span></div>
+      <div class="perm"><span class="dot"></span>开机密码<span class="st">已保存到钥匙串</span></div>
+      <div class="perm"><span class="dot wait"></span>通知<span class="st">未开启</span></div>
+      <p class="howto">密码不会写进任何日志文件，也不会上传。它只在锁屏或授权弹窗出现时被读出来用一次。</p>
+    </div>
+
+    <!-- ===== 步骤 5：开机 ===== -->
+    <div class="panel" data-p="5">
+      <h1>开机就安静地待在菜单栏</h1>
+      <p class="lede">登录后自动启动，不弹窗、不打扰，只在菜单栏留一个小图标。</p>
+      <div class="perm">
+        <span class="dot"></span>登录时自动启动
+        <input class="sw" type="checkbox" checked style="margin-left:auto">
+      </div>
+      <div class="perm"><span class="dot"></span>菜单栏显示信号强度<span class="st">已开启</span></div>
+      <p class="howto">你现在就可以合上设置，去倒杯水。回来的时候，屏幕应该已经自己亮了。</p>
+    </div>
+  </main>
+
+  <footer>
+    <div class="dots" id="dots">
+      <span class="on"></span><span></span><span></span><span></span><span></span>
+    </div>
+    <div class="spacer"></div>
+    <button class="btn" id="prev" disabled>上一步</button>
+    <button class="btn primary" id="next">下一步</button>
+  </footer>
+</div>
+
+<script>
+const $ = id => document.getElementById(id);
+const Q = new URLSearchParams(location.search);
+const CX = 170, CY = 170, ANG = 22 * Math.PI / 180;
+const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
+const radius = d => 26 + 132 * Math.pow(clamp((-40 - d) / 55, 0, 1), 1.35);
+
+let unlock = -60, lock = -85, step = Number(Q.get('step') || 1);
+
+/* 机型图标 */
+const HOST_KINDS = [
+  [/^MacBook/, 'laptop'], [/^iMac/, 'imac'], [/^Macmini/, 'mini'],
+  [/^Mac(13|14),(1|2|13|14)$/, 'studio'], [/^MacPro/, 'pro'], [/^Mac16,10$/, 'mini'],
+];
+function setHost(kind){
+  document.querySelectorAll('#host .gl').forEach(g => {
+    g.removeAttribute('hidden');
+    g.style.display = (g.dataset.host === kind) ? '' : 'none';
+  });
+  $('host').dataset.kind = kind;
+}
+setHost(Q.get('host') || 'mini');
+
+/* 环 */
+function layout(){
+  let r1 = radius(unlock), r2 = radius(lock);
+  if (r2 - r1 < 9) { const m = (r1 + r2) / 2; r1 = m - 4.5; r2 = m + 4.5; }
+  $('rUnlock').setAttribute('r', r1.toFixed(1));
+  $('rLock').setAttribute('r', r2.toFixed(1));
+  $('band').setAttribute('r', ((r1 + r2) / 2).toFixed(1));
+  $('band').setAttribute('stroke-width', Math.max(2, r2 - r1).toFixed(1));
+  place($('lUnlock'), r1, 203);
+  place($('lLock'), r2, 338);
+  $('lUnlock').textContent = '解锁 −' + Math.abs(unlock);
+  $('lLock').textContent = '锁屏 −' + Math.abs(lock);
+  $('oUnlock').textContent = '−' + Math.abs(unlock) + ' dBm';
+  $('oLock').textContent = '−' + Math.abs(lock) + ' dBm';
+}
+function place(el, r, deg){
+  const a = deg * Math.PI / 180;
+  const rr = r + 7;
+  const x = CX + rr * Math.cos(a), y = CY + rr * Math.sin(a) + 3.5;
+  el.setAttribute('x', x.toFixed(1)); el.setAttribute('y', y.toFixed(1));
+  el.setAttribute('text-anchor', x < CX ? 'end' : 'start');
+}
+
+/* 设备点 */
+let current = -58, locked = false;
+function placeDev(d){
+  current = d;
+  const r = radius(d);
+  const x = CX + r * Math.cos(ANG), y = CY + r * Math.sin(ANG);
+  $('dev').setAttribute('transform', `translate(${x.toFixed(1)} ${y.toFixed(1)})`);
+  $('devSub').textContent = '−' + Math.abs(Math.round(d)) + ' dBm';
+  $('devLbl').textContent = (step === 1) ? '主设备' : primaryName();
+  $('devLbl').setAttribute('text-anchor', x > CX ? 'start' : 'end');
+  $('devSub').setAttribute('text-anchor', x > CX ? 'start' : 'end');
+  const flip = x > CX ? 12 : -12;
+  $('devLbl').setAttribute('x', flip); $('devSub').setAttribute('x', flip);
+  $('dev').classList.toggle('is-away', locked || d <= lock);
+}
+function pulse(){ const p = $('pulse'); p.classList.remove('go'); void p.offsetWidth; p.classList.add('go'); }
+
+/* ---------- 步骤 1 的自动演示 ---------- */
+const cap = $('caption'), cd = $('cd'), cdBar = $('cdBar');
+let demo = null;
+function setCaption(html){ cap.innerHTML = html; }
+function setCountdown(p){           // 0..1
+  cd.classList.toggle('on', p > 0);
+  cdBar.style.transform = `scaleX(${clamp(p, 0, 1)})`;
+}
+
+const T = {
+  present:  ['它在你身上，<b>电脑就保持解锁</b>。'],
+  leaving:  ['人走开，广播里的信号开始变弱。'],
+  across:   ['越过「锁屏」环：<b>再等 45 秒</b>，确认不是路过。'],
+  gone:     ['45 秒到了，<b>屏幕自己锁上</b>。'],
+  back:     ['人回来，信号回升。'],
+  unlockAt: ['越过「解锁」环：<b>不用碰键盘，直接解开</b>。'],
+};
+
+function playDemo(){
+  if (demo) cancelAnimationFrame(demo.raf);
+  locked = false; setCountdown(0);
+  setCaption(T.present); placeDev(-58);     // 首帧同步，别等定时器
+  const seq = [];
+  let t = 0;
+  const at = (ms, fn) => seq.push({t: t += ms, fn});
+
+  at(0,        () => { setCaption(T.present); placeDev(-58); });
+  at(2100,     () => setCaption(T.leaving));
+  at(2200,     () => tween(-58, -92, 2600, d => {
+                    placeDev(d);
+                    if (d <= lock) setCaption(T.across);
+                 }));
+  at(5000,     () => { locked = true; placeDev(-92); setCaption(T.across); });
+  at(5300,     () => { let p = 0;
+                    const iv = setInterval(() => { p += 0.035; setCountdown(p);
+                      if (p >= 1) { clearInterval(iv); setCaption(T.gone); } }, 34); });
+  at(6900,     () => setCaption(T.gone));
+  at(8500,     () => { setCountdown(0); setCaption(T.back); });
+  at(8600,     () => tween(-92, -58, 2200, d => {
+                    placeDev(d);
+                    if (d >= lock) { locked = false; setCaption(T.back); }
+                    if (d >= unlock) { setCaption(T.unlockAt); }
+                 }));
+  at(10900,    () => { pulse(); placeDev(-58); locked = false; });
+  at(12600,    () => playDemo());          // 循环
+
+  function tween(from, to, dur, onStep, onEnd){
+    const t0 = performance.now();
+    const tick = () => {
+      const k = clamp((performance.now() - t0) / dur, 0, 1);
+      const e = 1 - Math.pow(1 - k, 3);       // ease-out cubic
+      onStep(from + (to - from) * e);
+      if (k < 1) setTimeout(tick, 16); else onEnd && onEnd();
+    };
+    tick();
+  }
+  let handle = 0;
+  const timers = [];
+  seq.forEach(s => timers.push(setTimeout(() => { if (s.fn) s.fn(); }, s.t)));
+  demo = { raf: handle, timers, stop(){ timers.forEach(clearTimeout); cancelAnimationFrame(handle); } };
+  demo.timers.push(setTimeout(() => {}, 1));
+  return demo;
+}
+$('replay').onclick = () => { if (demo) demo.stop(); playDemo(); };
+
+/* ---------- 步骤切换 ---------- */
+function render(){
+  document.body.dataset.step = step;
+  $('stepno').textContent = '0' + step + ' / 05';
+  [...$('dots').children].forEach((d, i) => d.classList.toggle('on', i === step - 1));
+  $('prev').disabled = step === 1;
+  $('next').textContent = step === 5 ? '开始使用' : '下一步';
+
+  const showField = (step === 1 || step === 3);
+  $('sliders').hidden = step !== 3;
+  $('cap').style.display = (step === 1) ? '' : 'none';
+  $('cap').style.visibility = '';
+  $('replay').style.display = (step === 1) ? '' : 'none';
+  $('svg').parentElement.style.display = showField ? '' : 'none';
+
+  if (step === 1) { if (demo) demo.stop(); playDemo(); }
+  else if (demo) { demo.stop(); demo = null; }
+  if (step === 3) { locked = false; setCountdown(0); }
+}
+$('next').onclick = () => { if (step < 5) { step++; render(); } else { document.body.classList.add('done'); } };
+$('prev').onclick = () => { if (step > 1) { step--; render(); } };
+$('skip').onclick = () => { step = 5; render(); };
+$('sUnlock').oninput = e => {
+  unlock = Math.min(+e.target.value, lock + 5);
+  e.target.value = unlock; layout();
+};
+$('sLock').oninput = e => {
+  lock = Math.max(+e.target.value, unlock - 5);
+  e.target.value = lock; layout();
+};
+
+$('sDelay').addEventListener('input', e => {
+  $('oDelay').textContent = e.target.value + ' 秒';
+});
+
+/* 主设备：星标单选 */
+let primaryId = 'xiaomi17';
+function primaryName(){
+  const b = document.querySelector('.starbtn[aria-pressed="true"]');
+  return b ? b.dataset.name : '主设备';
+}
+function syncPrimary(){
+  document.querySelectorAll('.starbtn').forEach(b => {
+    const on = b.dataset.primary === primaryId;
+    b.setAttribute('aria-pressed', String(on));
+  });
+  const t = $('nameTitle'); if (t) t.textContent = primaryName();
+}
+document.querySelectorAll('.starbtn').forEach(b => {
+  b.addEventListener('click', () => {
+    primaryId = b.dataset.primary;
+    const cb = document.querySelector(`.pick[data-trust="${primaryId}"]`);
+    if (cb) cb.checked = true;
+    syncPrimary(); placeDev(current);
+  });
+});
+syncPrimary();
+
+layout();
+placeDev(-58);
+requestAnimationFrame(() => { document.body.classList.add('ready'); render(); });
+</script>
+</body>
+</html>

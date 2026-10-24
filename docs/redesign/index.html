@@ -1,0 +1,537 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>NearbyPass · 设置</title>
+<style>
+:root{
+  /* 冷纸 / 石墨 / 琥珀刻度灯 —— 一台放在桌上的测距仪 */
+  --paper:#E7EAEB;
+  --sheet:#F4F5F6;
+  --ink:#15191B;
+  --ink-2:#4C5359;
+  --ink-3:#8A9197;
+  --hair:rgba(20,24,26,.10);
+  --hair-2:rgba(20,24,26,.055);
+  --signal:#8B5E00;
+  --signal-2:rgba(154,106,0,.16);
+  --away:#A4462F;
+  --r-s:5px; --r-m:9px; --r-l:13px;
+  --t-fast:140ms;
+  --e-out:cubic-bezier(.23,1,.32,1);
+  --e-move:cubic-bezier(.77,0,.175,1);
+}
+*{box-sizing:border-box}
+body{
+  margin:0;min-height:100vh;display:flex;justify-content:center;align-items:flex-start;
+  padding:40px;
+  background:radial-gradient(120% 90% at 50% 0%,#F2F4F5 0%,#DFE3E5 60%,#D2D7D9 100%);
+  font:400 13px/1.45 "SF Pro Text","Helvetica Neue",system-ui,sans-serif;
+  color:var(--ink);-webkit-font-smoothing:antialiased;
+}
+
+.win{
+  width:860px;height:712px;display:flex;flex-direction:column;
+  background:var(--paper);border-radius:var(--r-l);overflow:hidden;
+  box-shadow:
+    inset 0 0 0 1px rgba(255,255,255,.72),
+    0 0 0 1px rgba(20,24,26,.10),
+    0 20px 44px -14px rgba(20,24,26,.30),
+    0 2px 6px rgba(20,24,26,.07);
+}
+.bar{height:37px;flex:0 0 auto;display:flex;align-items:center;padding:0 13px;
+  background:linear-gradient(#F7F8F8,#F0F2F3);border-bottom:1px solid var(--hair-2)}
+.lights{display:flex;gap:8px}
+.light{width:11.5px;height:11.5px;border-radius:50%;box-shadow:inset 0 0 0 .5px rgba(0,0,0,.13)}
+.r{background:#E2695D}.y{background:#E5BB4B}.g{background:#5FBF57}
+.name{flex:1;text-align:center;font:600 11.5px/1 "SF Pro Text";color:var(--ink-3);margin-left:-52px}
+
+.body{flex:1 1 auto;display:grid;grid-template-columns:340px 1fr;min-height:0}
+
+/* ── 左：距离场 ─────────────────────────────────────── */
+.field{padding:18px 18px 14px 20px;border-right:1px solid var(--hair);
+  display:flex;flex-direction:column;min-height:0;
+  background:radial-gradient(78% 58% at 50% 40%,#F8F9F9 0%,rgba(248,249,249,0) 72%)}
+.fhead{flex:0 0 auto;display:flex;align-items:center;justify-content:space-between;margin-bottom:6px}
+.eyebrow{font:600 10px/1 "SF Pro Text";letter-spacing:.1em;color:var(--ink-3)}
+.status{display:inline-flex;align-items:center;gap:5px;font:500 11px/1 "SF Pro Text";color:var(--ink-2)}
+.sdot{width:5px;height:5px;border-radius:50%;background:var(--signal);
+  box-shadow:0 0 0 3px var(--signal-2);transition:background-color var(--t-fast)}
+.status.away .sdot{background:var(--away);box-shadow:0 0 0 3px rgba(164,70,47,.15)}
+
+.scope{flex:1 1 auto;min-height:0;display:flex;align-items:center;justify-content:center}
+.scope svg{display:block;width:100%;height:100%;max-height:424px;overflow:visible}
+
+/* 环：细的发丝，不填充 */
+.gring{fill:none;stroke:rgba(20,24,26,.13);stroke-width:.75}
+.tring{fill:none;stroke:var(--signal);stroke-width:1.4;stroke-opacity:.72;
+  transition:r 520ms var(--e-out)}
+.tband{fill:none;stroke:var(--signal);stroke-width:1;stroke-opacity:.42;
+  stroke-dasharray:2 2.5;transition:r 520ms var(--e-out),stroke-width 520ms var(--e-out)}
+.awayfill{fill:rgba(164,70,47,.06);opacity:0;transition:opacity 260ms linear}
+.field.is-away .awayfill{opacity:1}
+
+#host .gl[hidden]{display:none}
+.host{fill:none;stroke:rgba(20,24,26,.46);stroke-width:1.25;
+  stroke-linecap:round;stroke-linejoin:round;vector-effect:non-scaling-stroke}
+.ghost{fill:rgba(20,24,26,.11)}
+.dev{transition:transform 280ms var(--e-out)}
+.dev .pt{fill:var(--signal)}
+.dev .halo{fill:none;stroke:var(--signal);stroke-width:1;opacity:0;
+  transform-box:fill-box;transform-origin:center}
+.dev .lbl{font:600 10px "SF Pro Text";fill:var(--ink);paint-order:stroke;
+  stroke:var(--paper);stroke-width:3.5px;stroke-linejoin:round}
+.dev .sub{font:500 9.5px "SF Mono";fill:var(--ink-3);paint-order:stroke;
+  stroke:var(--paper);stroke-width:3.5px}
+.dev.pulse .halo{animation:ring 620ms var(--e-out) 1}
+@keyframes ring{0%{opacity:.85;transform:scale(.5)}100%{opacity:0;transform:scale(3)}}
+.rl{font:600 9.5px "SF Mono";fill:var(--signal);letter-spacing:.01em;
+  paint-order:stroke;stroke:var(--paper);stroke-width:3.5px}
+.rl.dim{fill:var(--ink-3);font-weight:500}
+
+/* 读数贴底 */
+.readout{flex:0 0 auto;display:grid;grid-template-columns:1fr 1fr;gap:12px;
+  border-top:1px solid var(--hair-2);padding-top:11px}
+.readout .k{font:500 10px/1.2 "SF Pro Text";color:var(--ink-3)}
+.readout .v{font:600 16px/1.15 "SF Mono";font-variant-numeric:tabular-nums;
+  letter-spacing:-.02em;margin-top:2px}
+.readout .v small{font:600 9.5px "SF Pro Text";color:var(--ink-3);margin-left:2px}
+.readout .v.txt{font:600 13px/1.3 "SF Pro Text";letter-spacing:0}
+
+/* ── 右：控制（自身滚动，页脚常驻） ─────────────────── */
+.panes{min-height:0;overflow-y:auto;padding:14px 22px 10px}
+.panes::-webkit-scrollbar{width:9px}
+.panes::-webkit-scrollbar-thumb{background:rgba(20,24,26,.16);border-radius:9px;
+  border:3px solid var(--paper)}
+.group{padding-bottom:9px}
+.group+.group{border-top:1px solid var(--hair-2);padding-top:10px}
+.ghead{display:flex;align-items:center;gap:14px;margin:0 0 6px}
+.ghead .gstar{margin-left:auto;font:400 10px/1.4 'SF Pro Text';color:var(--ink-3)}
+.ghead .gstar b{color:var(--signal);font-weight:600}
+.ghead h2{margin:0}
+.mini{display:inline-flex;align-items:center;gap:6px;font:500 10.5px "SF Pro Text";color:var(--ink-3);cursor:pointer}
+.group h2{margin:0 0 6px;font:600 10px/1 "SF Pro Text";letter-spacing:.1em;color:var(--ink-3)}
+
+.row{display:grid;grid-template-columns:1fr auto;align-items:center;gap:14px;
+  padding:4px 0;min-height:24px}
+.row .t{font:500 12.5px/1.3 "SF Pro Text"}
+.row .d{font:400 10.5px/1.35 "SF Pro Text";color:var(--ink-3);margin-top:2px}
+.row .v{font:600 12.5px "SF Mono";font-variant-numeric:tabular-nums;color:var(--ink-2)}
+
+/* 开关：开 = 石墨实心（琥珀只留给活数据） */
+.sw{width:33px;height:19px;flex:0 0 auto;border-radius:999px;border:0;padding:0;
+  background:rgba(20,24,26,.17);position:relative;cursor:pointer;
+  -webkit-appearance:none;appearance:none;
+  transition:background-color var(--t-fast) var(--e-out)}
+.sw::after{content:"";position:absolute;top:2px;left:2px;width:15px;height:15px;
+  border-radius:50%;background:#fff;box-shadow:0 1px 2px rgba(20,24,26,.3);
+  transition:transform var(--t-fast) var(--e-out)}
+.sw[aria-checked="true"]{background:var(--ink)}
+.sw[aria-checked="true"]::after{transform:translateX(14px)}
+.sw.sm{width:27px;height:16px}
+.sw.sm::after{width:12px;height:12px}
+.sw.sm[aria-checked="true"]::after{transform:translateX(11px)}
+.sw:focus-visible{outline:2px solid var(--signal);outline-offset:2px}
+
+.slider{grid-column:1/-1;margin-top:6px}
+input[type=range]{-webkit-appearance:none;appearance:none;width:100%;height:20px;
+  background:transparent;margin:0;cursor:ew-resize}
+input[type=range]::-webkit-slider-runnable-track{height:2px;border-radius:2px;
+  background:linear-gradient(90deg,var(--signal) 0 var(--p,30%),rgba(20,24,26,.13) var(--p,30%) 100%)}
+input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:13px;height:13px;
+  border-radius:50%;background:var(--sheet);border:1px solid rgba(20,24,26,.3);
+  margin-top:-5.5px;box-shadow:0 1px 2px rgba(20,24,26,.2);
+  transition:transform var(--t-fast) var(--e-out)}
+input[type=range]:active::-webkit-slider-thumb{transform:scale(1.15)}
+input[type=range]:focus-visible{outline:none}
+input[type=range]:focus-visible::-webkit-slider-thumb{outline:2px solid var(--signal);outline-offset:2px}
+
+.drow{display:grid;grid-template-columns:auto 1fr auto auto;align-items:center;gap:9px;padding:4px 0}
+.pick{
+  appearance:none;-webkit-appearance:none;width:15px;height:15px;border-radius:50%;
+  border:1.4px solid rgba(20,24,26,.30);background:none;cursor:pointer;position:relative;
+  flex:none;margin:0;transition:border-color 120ms linear, background 120ms linear;
+}
+.pick:hover{border-color:rgba(20,24,26,.55)}
+.pick:checked{border-color:var(--ink);background:var(--ink)}
+.pick:checked::after{content:"";position:absolute;left:4.2px;top:1.2px;width:3.2px;height:6.8px;
+  border:1.7px solid var(--paper);border-top:0;border-left:0;transform:rotate(38deg)}
+.starbtn{
+  appearance:none;border:0;background:none;cursor:pointer;
+  width:26px;height:26px;display:grid;place-items:center;border-radius:50%;
+  color:rgba(20,24,26,.24);padding:0;
+  transition:color 140ms var(--e-out),background-color 140ms var(--e-out),
+             transform 140ms var(--e-out);
+}
+.starbtn:hover{color:rgba(20,24,26,.48);background:rgba(20,24,26,.05)}
+.starbtn:active{transform:scale(.92)}
+.starbtn[aria-pressed="true"]{color:var(--signal)}
+.star-ic{
+  width:15px;height:15px;display:block;
+  fill:none;stroke:currentColor;stroke-width:1.7;
+  stroke-linejoin:round;stroke-linecap:round;
+}
+.starbtn[aria-pressed="true"] .star-ic{fill:currentColor;stroke-width:1.1}
+
+/* 从属行：缩进 + 左侧发丝线，表示它挂在上面那个开关下 */
+.row.sub{padding:2px 0 3px 15px;position:relative;min-height:0}
+.row.sub::before{content:"";position:absolute;left:4px;top:8px;bottom:8px;
+  width:1px;background:var(--hair)}
+.row.sub .t{font-weight:500;font-size:12px;color:var(--ink-2)}
+.hintline{font:400 10.5px/1.5 "SF Pro Text";color:var(--ink-3);padding:2px 0 0 0}
+.hintline b{color:var(--signal);font-weight:600}
+.devrow .nm{font:500 12px/1.25 "SF Pro Text"}
+.pill{font:500 9px/1 "SF Pro Text";color:var(--ink-3);border:1px solid var(--hair);
+  border-radius:999px;padding:2.5px 5px;margin-left:5px;vertical-align:1px}
+.devrow .rv{font:500 11px "SF Mono";color:var(--ink-3);font-variant-numeric:tabular-nums}
+
+.cd{height:2px;border-radius:2px;background:rgba(20,24,26,.09);overflow:hidden;margin:7px 0 9px}
+.cd i{display:block;height:100%;background:var(--away);transform:scaleX(0);
+  transform-origin:left;transition:transform 110ms linear}
+.demo{display:flex;gap:7px}
+.btn{font:500 11.5px "SF Pro Text";color:var(--ink);border:1px solid rgba(20,24,26,.15);
+  background:#FBFBFB;border-radius:var(--r-s);padding:5px 10px;min-height:26px;cursor:pointer;
+  transition:background-color var(--t-fast) var(--e-out),transform var(--t-fast) var(--e-out)}
+.btn:hover{background:#fff}
+.btn:active{transform:scale(.975)}
+.btn.pri{border-color:rgba(20,24,26,.34);color:var(--ink);background:#FFF}
+.btn.pri:hover{background:#fff;border-color:rgba(20,24,26,.5)}
+.hint{font:400 10px/1.45 "SF Pro Text";color:var(--ink-3);margin-top:6px}
+
+.foot{flex:0 0 auto;display:flex;align-items:center;gap:6px;padding:9px 22px;
+  border-top:1px solid var(--hair);
+  background:linear-gradient(rgba(255,255,255,.42),rgba(255,255,255,.06))}
+.foot .sp{flex:1}
+.link{font:500 11px "SF Pro Text";color:var(--ink-2);text-decoration:none;
+  padding:4px 6px;border-radius:var(--r-s);transition:background-color var(--t-fast)}
+.link:hover{background:rgba(20,24,26,.06);color:var(--ink)}
+.ver{font:500 10.5px "SF Mono";color:var(--ink-3);padding-right:2px}
+
+/* 载入：一次编排，之后不再动 */
+.reveal{opacity:0;transform:translateY(5px);
+  transition:opacity 400ms var(--e-out),transform 400ms var(--e-out)}
+.ready .reveal{opacity:1;transform:none}
+.ready .field .reveal:nth-of-type(1){transition-delay:60ms}
+.ready .field .reveal:nth-of-type(2){transition-delay:150ms}
+.ready .group:nth-child(1){transition-delay:120ms}
+.ready .group:nth-child(2){transition-delay:185ms}
+.ready .group:nth-child(3){transition-delay:250ms}
+.ready .foot{transition-delay:360ms}
+.rings{opacity:0;transform:scale(.97);transform-origin:170px 170px;
+  transition:opacity 520ms var(--e-out),transform 520ms var(--e-out)}
+.ready .rings{opacity:1;transform:scale(1)}
+
+.flat .reveal,.flat .rings{opacity:1!important;transform:none!important;
+  transition:none!important;animation:none!important}
+@media (prefers-reduced-motion:reduce){
+  *{animation:none!important}
+  .reveal,.rings{transform:none}
+}
+</style>
+</head>
+<body>
+<div class="win" id="win">
+  <div class="bar">
+    <div class="lights"><i class="light r"></i><i class="light y"></i><i class="light g"></i></div>
+    <div class="name">NearbyPass</div>
+  </div>
+
+  <div class="body">
+    <section class="field" id="field">
+      <div class="fhead reveal">
+        <span class="eyebrow">距离场</span>
+        <span class="status" id="status"><i class="sdot"></i><span id="stText">在场 · −64 dBm</span></span>
+      </div>
+
+      <div class="scope">
+        <svg id="svg" viewBox="0 0 340 340" role="img"
+             aria-label="距离场：两个同心环分别表示解锁与锁屏强度">
+          <g class="rings" id="rings">
+            <circle class="awayfill" id="awayFill" cx="170" cy="170" r="164"/>
+            <circle class="gring" cx="170" cy="170" r="42"/>
+            <circle class="gring" cx="170" cy="170" r="86"/>
+            <circle class="gring" cx="170" cy="170" r="164"/>
+
+            <circle class="tband" id="band" cx="170" cy="170" r="120"/>
+            <circle class="tring" id="rUnlock" cx="170" cy="170" r="112"/>
+            <circle class="tring" id="rLock" cx="170" cy="170" r="126"/>
+
+            <text class="rl" id="lUnlock">解锁 −80</text>
+            <text class="rl" id="lLock">锁屏 −85</text>
+
+            <circle class="ghost" cx="74" cy="232" r="2.5"/>
+            <circle class="ghost" cx="262" cy="246" r="2.5"/>
+            <circle class="ghost" cx="238" cy="112" r="2"/>
+
+            <g class="dev" id="dev">
+              <circle class="halo" cx="0" cy="0" r="8"/>
+              <circle class="pt" cx="0" cy="0" r="4"/>
+              <text class="lbl" x="9" y="3" id="devLbl">Xiaomi 17</text>
+              <text class="sub" x="9" y="14.5" id="devSub">−64 dBm</text>
+            </g>
+
+            <!-- 场心：这台机器自己 -->
+            <g id="host" transform="translate(170 170) scale(1.25)">
+              <g class="host gl" data-host="mini">
+                <rect x="-16" y="-7" width="32" height="10.5" rx="2.4"/>
+                <path d="M-4.5 0.6h9"/>
+                <path d="M-12 5.6h7.5M4.5 5.6h7.5" opacity=".5"/>
+              </g>
+              <g class="host gl" data-host="laptop" hidden>
+                <rect x="-11.5" y="-11" width="23" height="14" rx="1.8"/>
+                <path d="M-15.5 3.2h31l-2 2.8h-27z"/>
+                <path d="M-2.6 3.2h5.2" opacity=".55"/>
+              </g>
+              <g class="host gl" data-host="imac" hidden>
+                <rect x="-13" y="-11.5" width="26" height="17.5" rx="2.2"/>
+                <path d="M-13 1.6h26" opacity=".55"/>
+                <path d="M-2.2 6h4.4l1.5 3.3h-7.4z"/>
+                <path d="M-8 9.3h16"/>
+              </g>
+              <g class="host gl" data-host="studio" hidden>
+                <rect x="-13" y="-8.5" width="26" height="17" rx="2.4"/>
+                <circle cx="-7.5" cy="2.6" r="1"/>
+                <circle cx="-4" cy="2.6" r="1"/>
+                <path d="M0.5 2.6h8" opacity=".6"/>
+                <path d="M-9.5 -3.6h19" opacity=".4"/>
+              </g>
+              <g class="host gl" data-host="pro" hidden>
+                <rect x="-8.5" y="-13" width="17" height="26" rx="2.2"/>
+                <circle cx="0" cy="1.5" r="3.4"/>
+                <path d="M-8.5 7.5h17" opacity=".45"/>
+              </g>
+            </g>
+          </g>
+        </svg>
+      </div>
+
+      <div class="readout reveal">
+        <div>
+          <div class="k">迟滞区间</div>
+          <div class="v" id="hyst">5<small>dB</small></div>
+        </div>
+        <div>
+          <div class="k">此刻若锁屏</div>
+          <div class="v txt" id="willUnlock">会自动解锁</div>
+        </div>
+      </div>
+    </section>
+
+    <div class="panes">
+      <div class="group reveal">
+        <h2>行为</h2>
+        <div class="row">
+          <div><div class="t">授权弹窗出现时填入密码</div>
+            <div class="d">系统弹出「输入密码以继续」时，确认后自动填写</div></div>
+          <button class="sw" role="switch" aria-checked="true" aria-label="授权弹窗出现时填入密码" onclick="flip(this)"></button>
+        </div>
+        <div class="row">
+          <div><div class="t">锁屏后自动解锁</div>
+            <div class="d">主设备在场且信号强于解锁强度</div></div>
+          <button class="sw" role="switch" aria-checked="true" aria-label="锁屏后自动解锁" onclick="flip(this)"></button>
+        </div>
+        <div class="row">
+          <div><div class="t">离开后自动锁屏</div>
+            <div class="d">连续 45 秒判定离开后锁屏</div></div>
+          <button class="sw" role="switch" aria-checked="true" aria-label="离开后自动锁屏" onclick="flip(this)"></button>
+        </div>
+        <div class="row sub">
+          <div><div class="t">判定延迟</div>
+            <div class="d">信号弱于锁屏强度持续这么久，才算真的离开</div></div>
+          <div class="v" id="vDelay">45 秒</div>
+          <div class="slider"><input type="range" id="sDelay" min="15" max="300" step="5"
+                 value="45" aria-label="离开判定延迟"></div>
+        </div>
+        <div class="row">
+          <div><div class="t">登录时自动启动</div>
+            <div class="d">开机后静默驻留菜单栏，不弹窗口</div></div>
+          <button class="sw" role="switch" aria-checked="true" aria-label="登录时自动启动" onclick="flip(this)"></button>
+        </div>
+      </div>
+
+      <div class="group reveal">
+        <h2>阈值</h2>
+        <div class="row">
+          <div><div class="t">解锁强度</div>
+            <div class="d">信号强于此值才解锁</div></div>
+          <div class="v" id="vUnlock">−80 dBm</div>
+          <div class="slider"><input type="range" id="sUnlock" min="-95" max="-40" step="1" value="-80" aria-label="解锁强度"></div>
+        </div>
+        <div class="row">
+          <div><div class="t">锁屏强度</div>
+            <div class="d">弱于此值即算离开</div></div>
+          <div class="v" id="vLock">−85 dBm</div>
+          <div class="slider"><input type="range" id="sLock" min="-95" max="-40" step="1" value="-85" aria-label="锁屏强度"></div>
+        </div>
+      </div>
+
+      <div class="group reveal">
+        <div class="ghead">
+          <h2 style="margin:0">设备</h2>
+          <span class="gstar"><b>★</b> 主设备：解锁和锁屏只认这一台</span>
+          <label class="mini"><span>只看随身</span>
+            <button class="sw sm" role="switch" aria-checked="true" aria-label="只看随身设备" onclick="flip(this)"></button>
+          </label>
+        </div>
+        <div class="drow">
+          <input class="pick" type="checkbox" checked aria-label="Xiaomi 17 视为在场">
+          <div class="nm">Xiaomi 17<span class="pill">随身</span></div>
+          <div class="rv" id="devRssi">−64</div>
+          <button class="starbtn" aria-pressed="true" title="主设备：解锁和锁屏只认这一台"><svg class="star-ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3.9l2.55 5.4 5.9.82-4.28 4.13 1.03 5.85L12 17.32l-5.2 2.78 1.03-5.85L3.55 10.1l5.9-.82z"/></svg></button>
+        </div>
+        <div class="drow">
+          <input class="pick" type="checkbox" checked aria-label="小米手环 10 视为在场">
+          <div class="nm">小米手环 10<span class="pill">随身</span></div>
+          <div class="rv">−71</div>
+          <button class="starbtn" aria-pressed="false" title="设为主设备：解锁和锁屏只认这一台"><svg class="star-ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3.9l2.55 5.4 5.9.82-4.28 4.13 1.03 5.85L12 17.32l-5.2 2.78 1.03-5.85L3.55 10.1l5.9-.82z"/></svg></button>
+        </div>
+        <div class="drow">
+          <input class="pick" type="checkbox" aria-label="燚昊的 AirPods Pro 视为在场">
+          <div class="nm">燚昊的 AirPods Pro<span class="pill">外设</span></div>
+          <div class="rv">−55</div>
+          <button class="starbtn" aria-pressed="false" title="设为主设备：解锁和锁屏只认这一台"><svg class="star-ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3.9l2.55 5.4 5.9.82-4.28 4.13 1.03 5.85L12 17.32l-5.2 2.78 1.03-5.85L3.55 10.1l5.9-.82z"/></svg></button>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <div class="foot reveal">
+    <span style="display:inline-flex;align-items:center;gap:6px;padding-left:4px"><i style="width:5px;height:5px;border-radius:50%;background:#3C6B4F;box-shadow:0 0 0 3px rgba(60,107,79,.14)"></i><a class="link" href="#">权限正常</a></span>
+    <a class="link" href="#">修改密码…</a>
+    <a class="link" href="#">打开日志</a>
+    <span class="sp"></span>
+    <span class="ver">v1.2.9</span>
+  </div>
+</div>
+
+<script>
+const Q=new URLSearchParams(location.search);
+if(Q.get('flat'))document.documentElement.classList.add('flat');
+const AWAY=Q.get('away')==='1';
+
+/* 本机机型 → 场心图标。真实 App 里读 sysctl -n hw.model（这台是 Mac16,10 = Mac mini M4） */
+const HOST_KINDS=[
+  [/^MacBook/,            'laptop'],
+  [/^iMac/,               'imac'],
+  [/^Macmini/,            'mini'],
+  [/^Mac(13|14),(1|2|13|14)$/, 'studio'],
+  [/^MacPro/,             'pro'],
+  [/^Mac16,10$/,          'mini']   // Mac mini (M4)
+];
+function hostKind(model){
+  for(const [re,k] of HOST_KINDS) if(re.test(model)) return k;
+  return 'mini';
+}
+function setHost(kind){
+  document.querySelectorAll('#host .gl').forEach(g=>{
+    g.removeAttribute('hidden');
+    g.style.display = (g.dataset.host === kind) ? '' : 'none';
+  });
+  document.getElementById('host').dataset.kind = kind;
+}
+setHost(Q.get('host') || 'mini');
+const S={unlock:-80,lock:-85,rssi:AWAY?-93:-64,away:AWAY};
+const C=170;                       // 圆心（viewBox 340×340）
+const ANG=22*Math.PI/180;          // 设备固定方位角：只有半径在动
+
+/* dBm → 半径。近 = 小。指数 1.35 把常用区间（−55…−90）拉开 */
+const clamp=(v,a,b)=>Math.min(b,Math.max(a,v));
+function radius(d){
+  const t=clamp((-40-d)/55,0,1);
+  return 26+132*Math.pow(t,1.35);
+}
+const P=(r,deg)=>{const a=deg*Math.PI/180;return [C+Math.cos(a)*r,C+Math.sin(a)*r];};
+const $=id=>document.getElementById(id);
+const sU=$('sUnlock'), sL=$('sLock');
+
+function place(){
+  const [x,y]=P(radius(S.rssi), ANG*180/Math.PI);
+  $('dev').setAttribute('transform',`translate(${x.toFixed(2)} ${y.toFixed(2)})`);
+  const flipLbl = x > C + 40;
+  const lbl=$('devLbl'), sub=$('devSub');
+  [lbl,sub].forEach(t=>{ t.setAttribute('x', flipLbl?-9:9); t.setAttribute('text-anchor', flipLbl?'end':'start'); });
+  $('devSub').textContent=`−${Math.abs(S.rssi)} dBm`;
+  $('devRssi').textContent=`−${Math.abs(S.rssi)}`;
+  $('stText').textContent=(S.away?'离开中 · ':'在场 · ')+`−${Math.abs(S.rssi)} dBm`;
+  $('status').classList.toggle('away',S.away);
+  $('field').classList.toggle('is-away',S.away);
+}
+
+function paint(){
+  let ru=radius(S.unlock), rl=radius(S.lock);
+  if(rl-ru<9) rl=ru+9;                       // 两环永不低于 9px，靠近本身就是信息
+  $('rUnlock').setAttribute('r',ru);
+  $('rLock').setAttribute('r',rl);
+  $('band').setAttribute('r',(ru+rl)/2);
+  $('band').setAttribute('stroke-width',Math.max(3,(rl-ru)-2));
+  $('awayFill').setAttribute('r',rl+7);
+
+  const [ux,uy]=P(ru,203), [lx,ly]=P(rl,338);
+  const lab=(el,x,y,txt,anchor)=>{el.setAttribute('x',x.toFixed(1));
+    el.setAttribute('y',y.toFixed(1));el.setAttribute('text-anchor',anchor||'middle');
+    if(txt)el.textContent=txt;};
+  lab($('lUnlock'),ux,uy+3,`解锁 −${Math.abs(S.unlock)}`,'middle');
+  lab($('lLock'),lx,ly+3,`锁屏 −${Math.abs(S.lock)}`,'end');
+
+  const pct=(v)=>((v+95)/55*100).toFixed(1)+'%';
+  sU.style.setProperty('--p',pct(S.unlock)); sL.style.setProperty('--p',pct(S.lock));
+  $('vUnlock').textContent=`−${Math.abs(S.unlock)} dBm`;
+  $('vLock').textContent=`−${Math.abs(S.lock)} dBm`;
+  $('hyst').innerHTML=`${Math.abs(S.unlock-S.lock)}<small>dB</small>`;
+  verdict();
+}
+function verdict(){
+  const ok=S.rssi>=S.unlock, el=$('willUnlock');
+  el.textContent=ok?'会自动解锁':'不会解锁';
+  el.style.color=ok?'var(--signal)':'var(--ink-3)';
+}
+
+/* 阈值互钳：解锁必须比锁屏高至少 3 dB */
+sU.addEventListener('input',()=>{S.unlock=Math.max(+sU.value,S.lock+3);sU.value=S.unlock;paint();});
+sL.addEventListener('input',()=>{S.lock=Math.min(+sL.value,S.unlock-3);sL.value=S.lock;paint();});
+function flip(b){b.setAttribute('aria-checked',String(b.getAttribute('aria-checked')!=='true'));}
+
+/* 演示：信号衰减/回升 → 倒计时 → 环脉冲 */
+let cdTimer;
+function walk(back){
+  clearInterval(cdTimer);
+  const bar=$('cdBar'); bar.style.transform='scaleX(0)';
+  const target=back?-58:-93, start=S.rssi, t0=performance.now(), DUR=back?820:1400;
+  const tick=now=>{
+    const k=Math.min(1,(now-t0)/DUR), e=1-Math.pow(1-k,3);
+    const prev=S.rssi;
+    S.rssi=Math.round(start+(target-start)*e);
+    if(S.rssi!==prev){place();verdict();}
+    if(k<1)requestAnimationFrame(tick); else back&&pulse();
+  };
+  requestAnimationFrame(tick);
+  S.away=!back;
+  if(!back){let p=0;cdTimer=setInterval(()=>{p=Math.min(1,p+1/60);
+    bar.style.transform=`scaleX(${p})`;if(p>=1)clearInterval(cdTimer);},100);}
+}
+function pulse(){
+  ['rUnlock','rLock'].forEach(id=>$(id).animate(
+    [{strokeOpacity:.72},{strokeOpacity:1,offset:.22},{strokeOpacity:.72}],
+    {duration:620,easing:'cubic-bezier(.23,1,.32,1)'}));
+  const d=$('dev'); d.classList.remove('pulse'); void d.offsetWidth; d.classList.add('pulse');
+}
+
+document.querySelectorAll('.starbtn').forEach(b=>b.addEventListener('click',()=>{
+  document.querySelectorAll('.starbtn').forEach(o=>{
+    o.setAttribute('aria-pressed', String(o===b));
+  });
+}));
+const sDelay=$('sDelay');
+sDelay.addEventListener('input',()=>{$('vDelay').textContent=sDelay.value+' 秒';});
+paint();place();
+requestAnimationFrame(()=>setTimeout(()=>$('win').classList.add('ready'),60));
+
+/* 静息漂移：±1.5 dB，让场是活的，但不抢注意力 */
+if(!Q.get('still')) setInterval(()=>{
+  if(Math.abs(S.rssi-(S.away?-93:-64))>3)return;
+  S.rssi+=Math.round((Math.random()-.5)*3); place(); verdict();
+},1400);
+</script>
+</body>
+</html>

@@ -14,7 +14,7 @@ cd "$ROOT" || exit 1
 
 APP="NearbyPass"
 BID="com.lcg.nearbypass"
-VER="1.2.9"
+VER="1.2.10"
 BUILD="$ROOT/.build"
 CACHE="$ROOT/.cache"
 OUT="$BUILD/$APP.app"
@@ -132,6 +132,12 @@ if [ "${1:-}" = "--install" ] || [ "${1:-}" = "--run" ]; then
 fi
 
 if [ "${1:-}" = "--run" ]; then
+  # 必须先停掉旧进程：App 有单实例锁，直接 open 会静默退出，
+  # 结果跑的仍是旧二进制（改了代码界面不变）。
+  if pkill -f "/Applications/$APP.app/Contents/MacOS/$APP" 2>/dev/null; then
+    echo "==> 停止旧进程"
+    sleep 0.8
+  fi
   echo "==> 启动"
   open -a "/Applications/$APP.app"
 fi

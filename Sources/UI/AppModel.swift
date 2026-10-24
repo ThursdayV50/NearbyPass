@@ -227,8 +227,8 @@ final class AppModel: ObservableObject {
             return ("还没收到任何信任设备的信号", false)
         }
         if best >= unlockThreshold {
-            return ("此刻若锁屏 → 会自动解锁（当前 \(best) dBm ≥ \(unlockThreshold)）", true)
+            return ("此刻若锁屏 · 会自动解锁（当前 \(best) ≥ \(unlockThreshold) dBm）", true)
         }
-        return ("此刻若锁屏 → 不会自动解锁（当前 \(best) dBm < \(unlockThreshold)）", false)
+        return ("此刻若锁屏 · 不会自动解锁（当前 \(best) < \(unlockThreshold) dBm）", false)
     }
 }
