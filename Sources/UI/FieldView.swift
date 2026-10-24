@@ -122,21 +122,34 @@ struct DistanceField: View {
             ctx.fill(circle(dp, 8.5 * scale), with: .color(tint.opacity(0.13)))
             ctx.fill(circle(dp, 3.4 * scale), with: .color(tint))
 
+            // 标签压在环线上时得有个纸底，否则细线会从字里穿过去
             let name = placeholderName ? "主设备" : (deviceName ?? "主设备")
-            let flip = dp.x + 86 * scale > size.width
-            var t = Text(name)
+            let t1 = ctx.resolve(Text(name)
                 .font(Theme.text(10, .medium))
-                .foregroundStyle(present ? Theme.ink2 : Theme.away)
-            ctx.draw(t, at: CGPoint(x: dp.x + (flip ? -10 : 10) * scale,
-                                    y: dp.y - 9 * scale),
-                     anchor: flip ? .topTrailing : .topLeading)
-
-            t = Text("\(Int(shownRSSI.rounded())) dBm")
+                .foregroundStyle(present ? Theme.ink2 : Theme.away))
+            let t2 = ctx.resolve(Text("\(Int(shownRSSI.rounded())) dBm")
                 .font(Theme.mono(9))
-                .foregroundStyle(Theme.ink3)
-            ctx.draw(t, at: CGPoint(x: dp.x + (flip ? -10 : 10) * scale,
-                                    y: dp.y + 3 * scale),
-                     anchor: flip ? .topTrailing : .topLeading)
+                .foregroundStyle(Theme.ink3))
+            let box = CGSize(width: 200, height: 40)
+            let w = max(t1.measure(in: box).width, t2.measure(in: box).width)
+            let th = t1.measure(in: box).height
+
+            // 先量宽再决定往哪边放：往右会溢出就翻到左边
+            let gap = 13 * scale
+            let flip = dp.x + gap + w + 4 > size.width
+            let anchor: UnitPoint = flip ? .topTrailing : .topLeading
+            let tx = dp.x + (flip ? -gap : gap)
+            let y1 = dp.y - 9 * scale
+            let y2 = dp.y + 3 * scale
+
+            let bx = flip ? tx - w - 3 : tx - 3
+            ctx.fill(Path(roundedRect: CGRect(x: bx, y: y1 - 1.5,
+                                              width: w + 6, height: th + (y2 - y1) + 1),
+                          cornerRadius: 3),
+                     with: .color(Theme.sheet.opacity(0.84)))
+
+            ctx.draw(t1, at: CGPoint(x: tx, y: y1), anchor: anchor)
+            ctx.draw(t2, at: CGPoint(x: tx, y: y2), anchor: anchor)
         }
     }
 

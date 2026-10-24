@@ -29,25 +29,26 @@ final class TutorialWindow: NSObject, NSWindowDelegate {
 
     private func build() {
         let w = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 480, height: 600),
+            contentRect: NSRect(x: 0, y: 0, width: 660, height: 500),
             styleMask: [.titled, .closable, .fullSizeContentView],
             backing: .buffered,
             defer: false
         )
         w.title = "欢迎使用 NearbyPass"
+        w.appearance = NSAppearance(named: .aqua)
         w.isReleasedWhenClosed = false
         w.delegate = self
         w.titlebarAppearsTransparent = true
         w.titleVisibility = .hidden
         w.isMovableByWindowBackground = true
-        w.backgroundColor = NSColor(white: 0.105, alpha: 1)
+        w.backgroundColor = NSColor(srgbRed: 0.925, green: 0.937, blue: 0.941, alpha: 1)
         w.isOpaque = false
         let host = NSHostingView(rootView: TutorialView { [weak self] in
             self?.finish()
         })
-        host.frame = NSRect(x: 0, y: 0, width: 480, height: 600)
+        host.frame = NSRect(x: 0, y: 0, width: 660, height: 500)
         w.contentView = host
-        w.setContentSize(NSSize(width: 480, height: 600))
+        w.setContentSize(NSSize(width: 660, height: 500))
         w.center()
         window = w
 

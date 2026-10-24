@@ -41,6 +41,11 @@ final class AppModel: ObservableObject {
     @Published var wearableOnly = Settings.shared.wearableOnly
     /// 主设备不是手机/手环（例如被设成了键盘），自动锁屏会失效
     @Published var primaryIsWeak = false
+    /// 主设备名：不看它此刻在不在广播里，只要设过就有名字
+    var primaryName: String {
+        guard let id = Settings.shared.primaryDeviceID else { return "" }
+        return PresenceMonitor.shared.displayName(id)
+    }
 
     // 阈值
     @Published var unlockThreshold = Settings.shared.unlockThreshold

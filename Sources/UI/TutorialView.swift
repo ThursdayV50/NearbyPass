@@ -1,7 +1,7 @@
-// TutorialView.swift — 首次启动的 5 页教程
+// TutorialView.swift — 首次启动的 5 步引导
 //
-// 动效原则：弹簧 response 0.45 / damping 0.8，进场错开 60ms，
-// 系统开启「减弱动态效果」时全部退化为淡入。
+// 不只是"讲一遍"，而是带着把该设的东西设掉：选主设备、调两个阈值、开权限。
+// 每一步都能真的动，动完记进设置，用户走完就等于配置完了。
 
 import SwiftUI
 import AppKit
@@ -15,391 +15,530 @@ enum Motion {
 }
 
 struct TutorialView: View {
-    @State private var page = 0
+    @State private var page = TutorialView.initialPage
+    @ObservedObject private var m = AppModel.shared
+
+    /// 调试用：`--tut-page=2` 直接停在某一页，截图方便。
+    private static var initialPage: Int {
+        for a in CommandLine.arguments where a.hasPrefix("--tut-page=") {
+            if let n = Int(a.dropFirst("--tut-page=".count)) { return max(0, min(4, n)) }
+        }
+        return 0
+    }
     var onDone: () -> Void
 
-    private let pages = 5
+    private let titles = ["距离场", "选设备", "调强度", "开权限", "启动方式"]
 
     var body: some View {
         VStack(spacing: 0) {
             topBar
-
             ZStack {
                 switch page {
-                case 0: WelcomePage()
-                case 1: DialogPage()
-                case 2: LockPage()
-                case 3: ThresholdPage()
-                default: StarPage()
+                case 0: DemoPage()
+                case 1: DevicePage()
+                case 2: ThresholdPage()
+                case 3: PermissionPage()
+                default: LaunchPage()
                 }
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
             .animation(Motion.reduced ? .easeInOut(duration: 0.2) : Motion.spring, value: page)
-
             bottomBar
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(BrandBackground())
-        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .strokeBorder(.white.opacity(0.10), lineWidth: 1)
-        )
+        .frame(width: 660, height: 500)
+        .background(Theme.sheet)
+        .onAppear { m.start() }
     }
+
+    // MARK: - 顶栏
 
     private var topBar: some View {
-        HStack {
-            Text("NearbyPass").font(.system(size: 12, weight: .medium))
-                .foregroundStyle(.white.opacity(0.55))
+        HStack(spacing: 10) {
+            Text("NearbyPass")
+                .font(Theme.text(11, .medium))
+                .foregroundStyle(Theme.ink3)
+            Text(titles[min(page, titles.count - 1)])
+                .font(Theme.text(11, .medium))
+                .foregroundStyle(Theme.ink)
             Spacer()
-            Button("跳过") { onDone() }
-                .buttonStyle(.plain)
-                .font(.system(size: 11.5))
-                .foregroundStyle(.white.opacity(0.45))
-                .focusEffectDisabled()
-        }
-        .padding(.horizontal, 18)
-        .padding(.top, 26)
-    }
-
-    private var bottomBar: some View {
-        VStack(spacing: 14) {
-            HStack(spacing: 6) {
-                ForEach(0..<pages, id: \.self) { i in
+            HStack(spacing: 5) {
+                ForEach(0 ..< titles.count, id: \.self) { i in
                     Capsule()
-                        .fill(i == page ? Color.white.opacity(0.9) : Color.white.opacity(0.22))
-                        .frame(width: i == page ? 16 : 6, height: 6)
+                        .fill(i == page ? Theme.signal : Theme.hair)
+                        .frame(width: i == page ? 16 : 5, height: 5)
                         .animation(Motion.quick, value: page)
                 }
             }
-            HStack(spacing: 10) {
-                if page > 0 {
-                    Button("上一步") { page -= 1 }
-                        .buttonStyle(.plain)
-                        .font(.system(size: 12))
-                        .foregroundStyle(.white.opacity(0.55))
-                        .focusEffectDisabled()
-                }
-                Spacer()
-                Button {
-                    if page == pages - 1 { onDone() } else { page += 1 }
-                } label: {
-                    Text(page == pages - 1 ? "开始使用" : "下一步")
-                        .font(.system(size: 12, weight: .medium))
-                        .padding(.horizontal, 16)
-                        .padding(.vertical, 7)
-                        .background(.white.opacity(0.92), in: Capsule())
-                        .foregroundStyle(.black.opacity(0.85))
-                }
+            Button("跳过") { onDone() }
                 .buttonStyle(.plain)
+                .font(Theme.text(11))
+                .foregroundStyle(Theme.ink3)
+                .padding(.leading, 8)
                 .focusEffectDisabled()
-                .keyboardShortcut(.defaultAction)
-            }
-            .padding(.horizontal, 20)
         }
-        .padding(.bottom, 20)
+        .padding(.horizontal, 22)
+        .padding(.top, 18)
+        .padding(.bottom, 14)
+        .overlay(alignment: .bottom) {
+            Rectangle().fill(Theme.hair2).frame(height: 1)
+        }
     }
-}
 
-// MARK: - 第 1 页 欢迎：扩散波纹
+    // MARK: - 底栏
 
-struct WelcomePage: View {
-    @State private var phase: CGFloat = 0
-    @State private var shown = false
-
-    var body: some View {
-        VStack(spacing: 26) {
-            ZStack {
-                ForEach(0..<3, id: \.self) { i in
-                    Circle()
-                        .strokeBorder(Color.white.opacity(0.30), lineWidth: 1)
-                        .scaleEffect(phase + CGFloat(i) * 0.0)
-                        .opacity((1 - phase) * 0.55)
-                        .animation(
-                            Motion.reduced ? nil :
-                                .easeOut(duration: 3.0)
-                                .repeatForever(autoreverses: false)
-                                .delay(Double(i) * 1.0),
-                            value: phase)
+    private var bottomBar: some View {
+        HStack(spacing: 10) {
+            if page > 0 {
+                Button("上一步") { page -= 1 }
+                    .buttonStyle(.plain)
+                    .font(Theme.text(11))
+                    .foregroundStyle(Theme.ink2)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 6)
+                    .focusEffectDisabled()
+            }
+            Spacer()
+            Button {
+                if page == titles.count - 1 {
+                    onDone()
+                } else {
+                    page += 1
                 }
-                Image(systemName: "dot.radiowaves.left.and.right")
-                    .font(.system(size: 42, weight: .light))
-                    .foregroundStyle(.white)
+            } label: {
+                Text(page == titles.count - 1 ? "开始使用" : "下一步")
+                    .font(Theme.text(11.5, .medium))
+                    .foregroundStyle(Theme.sheet2)
+                    .padding(.horizontal, 15)
+                    .padding(.vertical, 7)
+                    .background(Theme.ink, in: RoundedRectangle(cornerRadius: 7, style: .continuous))
             }
-            .frame(width: 170, height: 170)
-            .onAppear {
-                guard !Motion.reduced else { return }
-                phase = 1
-            }
-
-            VStack(spacing: 10) {
-                Text("靠近即解锁")
-                    .font(.system(size: 20, weight: .semibold))
-                    .foregroundStyle(.white)
-                Text("设备在附近时解除锁屏，\n离开后自动锁定。")
-                    .font(.system(size: 12.5))
-                    .multilineTextAlignment(.center)
-                    .foregroundStyle(.white.opacity(0.62))
-                    .lineSpacing(3)
-            }
-            .opacity(shown ? 1 : 0)
-            .offset(y: shown ? 0 : 10)
-            .animation(Motion.spring.delay(0.1), value: shown)
+            .buttonStyle(.plain)
+            .focusEffectDisabled()
+            .keyboardShortcut(.defaultAction)
         }
-        .onAppear { shown = true }
+        .padding(.horizontal, 22)
+        .padding(.vertical, 14)
+        .overlay(alignment: .top) {
+            Rectangle().fill(Theme.hair2).frame(height: 1)
+        }
     }
 }
 
-// MARK: - 第 2 页 授权弹窗
+// MARK: - 01 距离场
 
-struct DialogPage: View {
-    @State private var dots = 0
-    @State private var showAsk = false
-    @State private var done = false
+private struct DemoPage: View {
+    @ObservedObject private var m = AppModel.shared
+    @State private var rssi: Int? = -58
+    @State private var caption = "手机在口袋里，它知道你在"
+    @State private var detail = "信号强过解锁环，屏幕上没有锁"
     @State private var task: Task<Void, Never>?
 
     var body: some View {
-        VStack(spacing: 22) {
-            Text("授权弹窗自动填写")
-                .font(.system(size: 18, weight: .semibold)).foregroundStyle(.white)
+        HStack(alignment: .center, spacing: 22) {
+            DistanceField(rssi: rssi, unlock: -62, lock: -84,
+                          deviceName: m.primaryName.isEmpty ? nil : m.primaryName,
+                          present: (rssi ?? -95) >= -84,
+                          placeholderName: m.primaryName.isEmpty)
+                .frame(width: 296, height: 296)
 
-            // 模拟的系统密码框
-            VStack(spacing: 10) {
-                Image(systemName: "lock.shield")
-                    .font(.system(size: 20, weight: .light))
-                    .foregroundStyle(.white.opacity(0.8))
-                Text("“系统设置”想要进行更改。")
-                    .font(.system(size: 11.5)).foregroundStyle(.white.opacity(0.8))
-                Text("输入你的密码以继续。")
-                    .font(.system(size: 10.5)).foregroundStyle(.white.opacity(0.5))
+            VStack(alignment: .leading, spacing: 0) {
+                Text("它现在知道你在不在")
+                    .font(Theme.text(16, .semibold))
+                    .foregroundStyle(Theme.ink)
+                    .padding(.bottom, 3)
+                Text(caption)
+                    .font(Theme.text(11.5, .medium))
+                    .foregroundStyle(Theme.signal)
+                    .padding(.bottom, 2)
+                Text(detail)
+                    .font(Theme.text(10.5))
+                    .foregroundStyle(Theme.ink3)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(height: 46, alignment: .top)
 
-                HStack(spacing: 5) {
-                    ForEach(0..<6, id: \.self) { i in
-                        Circle()
-                            .fill(.white.opacity(i < dots ? 0.9 : 0.15))
-                            .frame(width: 7, height: 7)
-                    }
+                VStack(alignment: .leading, spacing: 5) {
+                    legend(Theme.signal, "解锁环", "信号强于它才能解锁")
+                    legend(Theme.signal.opacity(0.45), "锁屏环", "弱于它算离开")
+                    legend(Theme.signal.opacity(0.18), "两个环之间", "什么都不做，所以不会在边界抖")
                 }
-                .padding(.vertical, 6)
-                .frame(width: 180)
-                .background(.white.opacity(0.06), in: RoundedRectangle(cornerRadius: 6))
-            }
-            .padding(18)
-            .frame(width: 240)
-            .background(.white.opacity(0.05), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-            .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .strokeBorder(.white.opacity(0.10), lineWidth: 1))
+                .padding(.bottom, 8)
 
-            // App 弹的确认卡
-            HStack(spacing: 8) {
-                Image(systemName: done ? "checkmark.circle.fill" : "dot.radiowaves.left.and.right")
-                    .foregroundStyle(.white.opacity(done ? 0.92 : 0.30))
-                Text(done ? "已填好" : "设备在附近，要填密码吗？")
-                    .font(.system(size: 11.5)).foregroundStyle(.white.opacity(0.9))
+                Button("再看一次") { run() }
+                    .buttonStyle(.plain)
+                    .font(Theme.text(10.5))
+                    .foregroundStyle(Theme.ink2)
+                    .padding(.horizontal, 9)
+                    .padding(.vertical, 4)
+                    .background(Theme.sheet2, in: RoundedRectangle(cornerRadius: 6))
+                    .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(Theme.hair, lineWidth: 1))
             }
-            .padding(.horizontal, 14).padding(.vertical, 9)
-            .background(.white.opacity(0.09), in: Capsule())
-            .overlay(Capsule().strokeBorder(.white.opacity(0.12), lineWidth: 1))
-            .scaleEffect(showAsk ? 1 : 0.9)
-            .opacity(showAsk ? 1 : 0)
-
-            Text("需确认后才会填入，取消则不执行任何操作。")
-                .font(.system(size: 11)).foregroundStyle(.white.opacity(0.45))
+            .frame(maxWidth: 258, alignment: .leading)
         }
+        .padding(.horizontal, 24)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .onAppear { run() }
         .onDisappear { task?.cancel() }
     }
 
+    private func legend(_ c: Color, _ title: String, _ note: String) -> some View {
+        HStack(alignment: .top, spacing: 6) {
+            Circle().fill(c).frame(width: 5, height: 5).padding(.top, 5)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(title).font(Theme.text(10.5, .medium)).foregroundStyle(Theme.ink2)
+                Text(note).font(Theme.text(9.5)).foregroundStyle(Theme.ink3)
+            }
+        }
+    }
+
     private func run() {
-        dots = 0; showAsk = false; done = false
+        task?.cancel()
         task = Task { @MainActor in
             while !Task.isCancelled {
-                try? await Task.sleep(nanoseconds: 2_600_000_000)
-                if Task.isCancelled { return }
-                dots = 0; done = false
-                withAnimation(Motion.quick) { showAsk = false }
-                try? await Task.sleep(nanoseconds: 500_000_000)
-                withAnimation(Motion.spring) { showAsk = true }
-                try? await Task.sleep(nanoseconds: 700_000_000)
-                for i in 1...6 {
-                    if Task.isCancelled { return }
-                    withAnimation(.easeOut(duration: 0.12)) { dots = i }
-                    try? await Task.sleep(nanoseconds: 110_000_000)
-                }
-                try? await Task.sleep(nanoseconds: 350_000_000)
-                withAnimation(Motion.spring) { done = true; showAsk = true }
+                rssi = -58
+                caption = "手机在口袋里，它知道你在"
+                detail = "信号强过解锁环，屏幕上没有锁"
+                try? await Task.sleep(nanoseconds: 2_200_000_000)
+                guard !Task.isCancelled else { return }
+
+                rssi = -74
+                caption = "你起身走开了"
+                detail = "强度掉进两个环之间：不锁，也不解锁，等它继续掉"
+                try? await Task.sleep(nanoseconds: 1_600_000_000)
+                guard !Task.isCancelled else { return }
+
+                rssi = -88
+                caption = "越过锁屏环"
+                detail = "开始数判定延迟（默认 45 秒），中途信号回来就取消"
+                try? await Task.sleep(nanoseconds: 1_700_000_000)
+                guard !Task.isCancelled else { return }
+
+                rssi = -93
+                caption = "屏幕锁上了"
+                detail = "此刻如果它重新出现，就会自动填密码解锁"
+                try? await Task.sleep(nanoseconds: 1_500_000_000)
+                guard !Task.isCancelled else { return }
+
+                rssi = -78
+                caption = "你回来了"
+                detail = "回到带内，但还差一点才够到解锁环"
+                try? await Task.sleep(nanoseconds: 1_300_000_000)
+                guard !Task.isCancelled else { return }
+
+                rssi = -56
+                caption = "越过解锁环，自动解锁"
+                detail = "不需要确认，也不需要按任何键"
+                try? await Task.sleep(nanoseconds: 1_800_000_000)
             }
         }
     }
 }
 
-// MARK: - 第 3 页 解锁 / 锁屏
+// MARK: - 02 选设备
 
-struct LockPage: View {
-    @State private var near = true
-    @State private var task: Task<Void, Never>?
+private struct DevicePage: View {
+    @ObservedObject private var m = AppModel.shared
 
-    var body: some View {
-        VStack(spacing: 24) {
-            Text("距离判定")
-                .font(.system(size: 18, weight: .semibold)).foregroundStyle(.white)
+    private var hasPrimary: Bool { !m.primaryName.isEmpty }
 
-            HStack(spacing: 26) {
-                Image(systemName: "iphone")
-                    .font(.system(size: 40, weight: .light))
-                    .foregroundStyle(.white.opacity(near ? 0.95 : 0.35))
-                    .scaleEffect(near ? 1.04 : 0.94)
-
-                // 中间的信号波纹
-                HStack(spacing: 4) {
-                    ForEach(0..<3, id: \.self) { i in
-                        Circle()
-                            .fill(Color.white.opacity(0.55))
-                            .frame(width: 5, height: 5)
-                            .opacity(near ? 0.9 - Double(i) * 0.22 : 0.12)
-                            .animation(Motion.quick.delay(Double(i) * 0.06), value: near)
-                    }
-                }
-
-                // 电脑屏幕
-                ZStack {
-                    RoundedRectangle(cornerRadius: 6, style: .continuous)
-                        .fill(near ? Color(white: 0.30) : Color(white: 0.10))
-                        .frame(width: 84, height: 54)
-                    RoundedRectangle(cornerRadius: 6, style: .continuous)
-                        .strokeBorder(.white.opacity(0.18), lineWidth: 1)
-                        .frame(width: 84, height: 54)
-                    if !near {
-                        Image(systemName: "lock.fill")
-                            .font(.system(size: 15))
-                            .foregroundStyle(.white.opacity(0.75))
-                            .transition(.scale.combined(with: .opacity))
-                    }
-                }
-                .animation(Motion.spring, value: near)
-            }
-            .padding(.vertical, 6)
-
-            Text(near ? "设备在场 · 已解锁" : "设备远离 · 已锁屏")
-                .font(.system(size: 12, weight: .medium))
-                .foregroundStyle(near
-                                 ? Color(white: 0.92)
-                                 : Color(white: 0.55))
-                .contentTransition(.opacity)
-
-            Text("两个阈值分别对应「在场」与「离开」。\n中间区间留作缓冲，用于抑制信号波动引起的反复切换。")
-                .font(.system(size: 11))
-                .multilineTextAlignment(.center)
-                .foregroundStyle(.white.opacity(0.45))
-                .lineSpacing(3)
-        }
-        .onAppear {
-            guard !Motion.reduced else { return }
-            task = Task { @MainActor in
-                while !Task.isCancelled {
-                    try? await Task.sleep(nanoseconds: 2_400_000_000)
-                    if Task.isCancelled { return }
-                    withAnimation(Motion.spring) { near.toggle() }
-                }
+    /// 同名多 MAC 的设备（耳机、手环常见）合成一行，避免出现三条一模一样的记录
+    private var rows: [DeviceVM] {
+        var best: [String: DeviceVM] = [:]
+        var order: [String] = []
+        for d in m.devices {
+            if let old = best[d.name] {
+                if (d.rssi ?? -999) > (old.rssi ?? -999) { best[d.name] = d }
+            } else {
+                best[d.name] = d
+                order.append(d.name)
             }
         }
-        .onDisappear { task?.cancel() }
+        return order.compactMap { best[$0] }
     }
-}
-
-// MARK: - 第 4 页 阈值
-
-struct ThresholdPage: View {
-    @State private var low = -85
-    @State private var high = -60
 
     var body: some View {
-        VStack(spacing: 22) {
-            Text("阈值")
-                .font(.system(size: 18, weight: .semibold)).foregroundStyle(.white)
+        VStack(alignment: .leading, spacing: 0) {
+            head("挑一台随身设备",
+                 "手机或手环最合适——它会跟着你走。星标那台是主设备，解锁和锁屏只认它。")
 
-            GlassCard(radius: 14, padding: 16) {
-                VStack(alignment: .leading, spacing: 12) {
-                    RangeSlider(
-                        low: Binding(get: { low }, set: { low = min($0, high - 5) }),
-                        high: Binding(get: { high }, set: { high = max($0, low + 5) })
-                    )
-                    HStack {
-                        Text("锁屏 \(low) dBm").font(.system(size: 11)).monospacedDigit()
-                            .foregroundStyle(Color.white.opacity(0.55))
-                        Spacer()
-                        Text("解锁 \(high) dBm").font(.system(size: 11)).monospacedDigit()
-                            .foregroundStyle(Color.white.opacity(0.92))
+            ScrollView(.vertical, showsIndicators: false) {
+                VStack(spacing: 0) {
+                    ForEach(rows) { d in
+                        row(d)
+                        Rectangle().fill(Theme.hair2).frame(height: 1)
                     }
-                    Text("越靠右要求越严格，需更近才解锁。")
-                        .font(.system(size: 10.5)).foregroundStyle(.white.opacity(0.45))
                 }
             }
-            .frame(width: 340)
+            .frame(height: 244)
+            .background(Theme.sheet2)
+            .overlay(Rectangle().strokeBorder(Theme.hair, lineWidth: 1))
 
-            Text("可随时在设置中调整，默认 -60 / -85。")
-                .font(.system(size: 11))
-                .multilineTextAlignment(.center)
-                .foregroundStyle(.white.opacity(0.45))
-                .lineSpacing(3)
-        }
-    }
-}
-
-// MARK: - 第 5 页 收尾 + Star
-
-struct StarPage: View {
-    @State private var shown = false
-
-    private let repo = "https://github.com/ThursdayV50/NearbyPass"
-
-    var body: some View {
-        VStack(spacing: 20) {
-            Image(systemName: "star.fill")
-                .font(.system(size: 34, weight: .light))
-                .foregroundStyle(Color.white.opacity(0.92))
-                .shadow(color: Color.black.opacity(0.45), radius: 10, y: 2)
-                .scaleEffect(shown ? 1 : 0.7)
-                .animation(Motion.spring.delay(0.05), value: shown)
-
-            VStack(spacing: 8) {
-                Text("准备就绪")
-                    .font(.system(size: 18, weight: .semibold)).foregroundStyle(.white)
-                Text("接下来勾选信任设备并设置登录密码，即可开始使用。")
-                    .font(.system(size: 12))
-                    .foregroundStyle(.white.opacity(0.6))
-            }
-
-            VStack(spacing: 10) {
-                Text("本项目开源，代码托管于 GitHub。\n若对你有帮助，欢迎 Star。")
+            HStack(spacing: 8) {
+                Image(systemName: hasPrimary ? "checkmark.circle.fill" : "circle.dashed")
                     .font(.system(size: 11))
-                    .multilineTextAlignment(.center)
-                    .foregroundStyle(.white.opacity(0.45))
-                    .lineSpacing(3)
-
-                Button {
-                    if let u = URL(string: repo) { NSWorkspace.shared.open(u) }
-                } label: {
-                    HStack(spacing: 6) {
-                        Image(systemName: "star")
-                        Text("在 GitHub 上 Star")
-                    }
-                    .font(.system(size: 12, weight: .medium))
-                    .padding(.horizontal, 16).padding(.vertical, 8)
-                    .background(.white.opacity(0.10), in: Capsule())
-                    .overlay(Capsule().strokeBorder(.white.opacity(0.16), lineWidth: 1))
-                    .foregroundStyle(.white)
+                    .foregroundStyle(hasPrimary ? Theme.signal : Theme.ink3)
+                Text(hasPrimary ? "主设备：\(m.primaryName)" : "还没选主设备：点右边的星标")
+                    .font(Theme.text(10.5))
+                    .foregroundStyle(hasPrimary ? Theme.ink2 : Theme.away)
+                Spacer()
+                if m.hiddenDeviceCount > 0 {
+                    Text("已隐藏 \(m.hiddenDeviceCount) 个")
+                        .font(Theme.text(10))
+                        .foregroundStyle(Theme.ink3)
                 }
-                .buttonStyle(.plain)
-
-                Text("github.com/ThursdayV50/NearbyPass")
-                    .font(.system(size: 10))
-                    .foregroundStyle(.white.opacity(0.28))
             }
-            .opacity(shown ? 1 : 0)
-            .offset(y: shown ? 0 : 8)
-            .animation(Motion.spring.delay(0.12), value: shown)
+            .padding(.top, 10)
         }
-        .onAppear { shown = true }
+        .padding(.horizontal, 24)
     }
+
+    private func row(_ d: DeviceVM) -> some View {
+        HStack(spacing: 9) {
+            Button { m.toggleTrust(d.id) } label: {
+                CheckCircle(on: d.trusted)
+            }
+            .buttonStyle(.plain)
+            .focusEffectDisabled()
+
+            Text(d.name)
+                .font(Theme.text(11.5))
+                .foregroundStyle(d.rssi == nil ? Theme.ink3 : Theme.ink)
+                .lineLimit(1)
+
+            if !d.kind.isPresenceCapable {
+                Text(d.kind.badge)
+                    .font(Theme.text(9))
+                    .padding(.horizontal, 4).padding(.vertical, 1)
+                    .background(Theme.hair2, in: Capsule())
+                    .foregroundStyle(Theme.ink3)
+            }
+            Spacer(minLength: 6)
+            Text(d.rssi.map { "\($0) dBm" } ?? "未在附近")
+                .font(Theme.mono(10.5))
+                .foregroundStyle(Theme.ink3)
+                .frame(width: 72, alignment: .trailing)
+            Button { m.setPrimary(d.id) } label: {
+                StarMark(on: d.primary).frame(width: 26, height: 26)
+            }
+            .buttonStyle(.plain)
+            .focusEffectDisabled()
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 6)
+    }
+}
+
+// MARK: - 03 调强度
+
+private struct ThresholdPage: View {
+    @ObservedObject private var m = AppModel.shared
+
+    var body: some View {
+        HStack(alignment: .center, spacing: 26) {
+            DistanceField(rssi: -72,
+                          unlock: m.unlockThreshold,
+                          lock: m.lockThreshold,
+                          deviceName: m.primaryName.isEmpty ? nil : m.primaryName,
+                          present: true,
+                          placeholderName: m.primaryName.isEmpty)
+                .frame(width: 272, height: 272)
+
+            VStack(alignment: .leading, spacing: 0) {
+                head("把两个环放到合适的位置",
+                     "解锁环越接近你平时的信号强度，解锁越早；两环隔得越开，越不容易在边界反复抖。")
+
+                slider("解锁强度", "强于此值才解锁", value: Binding(
+                    get: { m.unlockThreshold },
+                    set: { m.setThresholds(low: m.lockThreshold, high: $0) }))
+
+                slider("锁屏强度", "弱于此值算离开", value: Binding(
+                    get: { m.lockThreshold },
+                    set: { m.setThresholds(low: $0, high: m.unlockThreshold) }))
+
+                HStack(alignment: .firstTextBaseline, spacing: 5) {
+                    Text("迟滞区间")
+                        .font(Theme.text(10)).foregroundStyle(Theme.ink3)
+                    Text("\(abs(m.unlockThreshold - m.lockThreshold)) dB")
+                        .font(Theme.mono(10.5, .medium)).foregroundStyle(Theme.ink)
+                    Spacer()
+                }
+                .padding(.top, 4)
+            }
+            .frame(maxWidth: 278, alignment: .leading)
+        }
+        .padding(.horizontal, 26)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private func slider(_ title: String, _ hint: String, value: Binding<Int>) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            HStack {
+                Text(title).font(Theme.text(11, .medium)).foregroundStyle(Theme.ink)
+                Spacer()
+                Text("\(value.wrappedValue) dBm")
+                    .font(Theme.mono(10.5, .medium)).foregroundStyle(Theme.signal)
+            }
+            Text(hint).font(Theme.text(9.5)).foregroundStyle(Theme.ink3)
+            Slider(value: Binding(get: { Double(value.wrappedValue) },
+                                  set: { value.wrappedValue = Int($0.rounded()) }),
+                   in: -95 ... -40, step: 1)
+                .controlSize(.mini)
+                .tint(Theme.signal)
+        }
+        .padding(.bottom, 7)
+    }
+}
+
+// MARK: - 04 权限
+
+private struct PermissionPage: View {
+    @ObservedObject private var m = AppModel.shared
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            head("四项检查",
+                 "前两项没给，App 就读不到弹窗、也按不了按钮。")
+
+            VStack(spacing: 0) {
+                item(m.axTrusted, "辅助功能",
+                     "读授权弹窗、填密码、点「好」都靠它",
+                     m.axTrusted ? nil : "去授权") { Dialogs.permissionCheck() }
+                item(m.bluetoothOn, "蓝牙",
+                     "扫描在场设备的广播强度",
+                     m.bluetoothOn ? nil : "打开设置") {
+                         if let u = URL(string: "x-apple.systempreferences:com.apple.Bluetooth") {
+                             NSWorkspace.shared.open(u)
+                         }
+                     }
+                item(m.hasPassword, "登录密码",
+                     "存在本机（权限 600），只用于自动填写",
+                     m.hasPassword ? nil : "去设置") { SettingsWindow.shared.show() }
+                item(m.axTrusted && m.hasPassword, "锁屏界面可读",
+                     "锁屏时由 loginwindow 显示密码框，同样走辅助功能",
+                     nil) {}
+            }
+
+            Text("系统设置 › 隐私与安全性 › 辅助功能，把 NearbyPass 勾上；改动后要重启 App 才生效。")
+                .font(Theme.text(10))
+                .foregroundStyle(Theme.ink3)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.top, 10)
+        }
+        .padding(.horizontal, 24)
+    }
+
+    private func item(_ ok: Bool, _ title: String, _ note: String,
+                      _ action: String?, _ run: @escaping () -> Void) -> some View {
+        HStack(alignment: .center, spacing: 10) {
+            Image(systemName: ok ? "checkmark.circle.fill" : "circle")
+                .font(.system(size: 12))
+                .foregroundStyle(ok ? Theme.signal : Theme.ink3.opacity(0.5))
+            VStack(alignment: .leading, spacing: 1) {
+                Text(title).font(Theme.text(11.5, .medium)).foregroundStyle(Theme.ink)
+                Text(note).font(Theme.text(10)).foregroundStyle(Theme.ink3)
+                    .lineLimit(1)
+            }
+            Spacer(minLength: 8)
+            if let action {
+                Button(action) { run() }
+                    .buttonStyle(.plain)
+                    .font(Theme.text(10.5))
+                    .foregroundStyle(Theme.ink2)
+                    .padding(.horizontal, 9).padding(.vertical, 4)
+                    .background(Theme.sheet2, in: RoundedRectangle(cornerRadius: 6))
+                    .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(Theme.hair, lineWidth: 1))
+                    .focusEffectDisabled()
+            }
+        }
+        .padding(.vertical, 7)
+        .overlay(alignment: .bottom) {
+            Rectangle().fill(Theme.hair2).frame(height: 1)
+        }
+    }
+}
+
+// MARK: - 05 启动方式
+
+private struct LaunchPage: View {
+    @ObservedObject private var m = AppModel.shared
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            head("登录时自动启动",
+                 "开着它，开机后直接驻留菜单栏，不弹任何窗口。")
+
+            HStack(spacing: 10) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("登录时启动 NearbyPass")
+                        .font(Theme.text(11.5, .medium)).foregroundStyle(Theme.ink)
+                    Text("不占 Dock，只在菜单栏留一个图标")
+                        .font(Theme.text(10)).foregroundStyle(Theme.ink3)
+                }
+                Spacer(minLength: 8)
+                Toggle("", isOn: Binding(get: { m.launchAtLogin },
+                                         set: { m.setLaunchAtLogin($0) }))
+                    .labelsHidden()
+                    .toggleStyle(.switch)
+                    .controlSize(.small)
+                    .tint(Theme.switchOn)
+            }
+            .padding(.vertical, 9)
+            .overlay(alignment: .bottom) {
+                Rectangle().fill(Theme.hair2).frame(height: 1)
+            }
+
+            if let p = m.loginItemProblem {
+                Text("设置失败：\(p)")
+                    .font(Theme.text(10))
+                    .foregroundStyle(Theme.away)
+                    .padding(.top, 7)
+            }
+
+            Text("之后它会这样工作")
+                .font(Theme.text(11, .medium))
+                .foregroundStyle(Theme.ink)
+                .padding(.top, 14)
+                .padding(.bottom, 6)
+
+            VStack(alignment: .leading, spacing: 5) {
+                it("授权弹窗：弹出来的是系统框，确认后由 NearbyPass 填密码")
+                it("锁屏解锁：先判「是不是自己锁的」，你主动锁的不会被解")
+                it("离开锁屏：判定延迟之内信号回来就取消")
+                it("随时从菜单栏暂停全部动作，不用退出")
+            }
+
+            Spacer(minLength: 0)
+
+            Text("点「开始使用」会打开设置窗口；之后随时从菜单栏进这个界面。")
+                .font(Theme.text(10))
+                .foregroundStyle(Theme.ink3)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.bottom, 2)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 24)
+    }
+
+    private func it(_ s: String) -> some View {
+        HStack(alignment: .top, spacing: 6) {
+            Circle().fill(Theme.hair).frame(width: 4, height: 4).padding(.top, 5)
+            Text(s).font(Theme.text(10)).foregroundStyle(Theme.ink3)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+}
+
+// MARK: - 共用
+
+private func head(_ title: String, _ note: String) -> some View {
+    VStack(alignment: .leading, spacing: 4) {
+        Text(title)
+            .font(Theme.text(15, .semibold))
+            .foregroundStyle(Theme.ink)
+        Text(note)
+            .font(Theme.text(11))
+            .foregroundStyle(Theme.ink3)
+            .fixedSize(horizontal: false, vertical: true)
+    }
+    .padding(.top, 18)
+    .padding(.bottom, 12)
 }
