@@ -68,11 +68,10 @@ final class Log {
     }
 
     private func append(_ level: LogLevel, _ text: String) {
-        let clean = scrub(text)
-        let entry = LogEntry(time: Date(), level: level, text: clean)
-
         queue.async { [weak self] in
             guard let self else { return }
+            let clean = self.scrub(text)
+            let entry = LogEntry(time: Date(), level: level, text: clean)
             self.buffer.append(entry)
             if self.buffer.count > self.capacity {
                 self.buffer.removeFirst(self.buffer.count - self.capacity)

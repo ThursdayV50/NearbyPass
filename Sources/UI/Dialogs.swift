@@ -42,6 +42,10 @@ enum Dialogs {
 
 extension Dialogs {
     static func info(_ title: String, _ body: String) {
+        guard Thread.isMainThread else {
+            DispatchQueue.main.async { info(title, body) }
+            return
+        }
         NSApp.activate(ignoringOtherApps: true)
         let a = NSAlert()
         a.messageText = title

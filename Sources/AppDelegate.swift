@@ -64,6 +64,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         AutoLockHandler.shared.start()
         AutoUnlockHandler.shared.start()
         AuthDialogHandler.shared.start()
+        Updater.shared.startScheduling()
 
         // 每秒刷新（只改文字，不重建菜单）
         let t = Timer(timeInterval: 1.0, repeats: true) { [weak self] _ in
@@ -248,10 +249,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let src = Bundle.main.bundleURL
         let dst = URL(fileURLWithPath: "/Applications/NearbyPass.app")
         do {
-            if FileManager.default.fileExists(atPath: dst.path) {
-                try FileManager.default.removeItem(at: dst)
-            }
-            try FileManager.default.copyItem(at: src, to: dst)
+            try installAppBundle(from: src, to: dst)
             Log.info("已安装到 /Applications/NearbyPass.app")
             Notifier.post(title: "NearbyPass", body: "已安装到「应用程序」")
             NSWorkspace.shared.activateFileViewerSelecting([dst])

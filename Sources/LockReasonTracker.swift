@@ -72,6 +72,11 @@ final class LockReasonTracker {
         Log.debug("已标记自主锁屏")
     }
 
+    func cancelSelfLock() {
+        selfLockRequested = false
+        Log.debug("自主锁屏未生效，已清除标记")
+    }
+
     /// 锁屏瞬间调用
     func evaluateOnLock(nowPresence: PresenceState) {
         if selfLockRequested {

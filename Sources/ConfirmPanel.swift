@@ -59,6 +59,7 @@ final class ConfirmPanel {
     private var watch: Timer?
     private var submitted = false
     private var targetWindow = 0
+    private var sessionID = 0
     private var allowButton: NSButton?
     private var cancelButton: NSButton?
 
@@ -74,6 +75,8 @@ final class ConfirmPanel {
         windowNumber: Int = 0,
         onAllow: @escaping () -> Void
     ) {
+        sessionID += 1
+        let currentSession = sessionID
         close()
         finished = false
         submitted = false
@@ -256,7 +259,7 @@ final class ConfirmPanel {
 
         // 兜底：任何情况下浮窗都不该无限留在屏幕上
         DispatchQueue.main.asyncAfter(deadline: .now() + 90) { [weak self] in
-            guard let self, !self.finished else { return }
+            guard let self, self.sessionID == currentSession, !self.finished else { return }
             Log.info("确认浮窗超时兜底关闭")
             self.finished = true
             self.close()
@@ -289,8 +292,8 @@ final class ConfirmPanel {
     @objc private func allowTapped() {
         guard !finished, !submitted else { return }
         submitted = true
-        allowButton?.isEnabled = false
-        cancelButton?.isEnabled = false
+        allowButton?.isHidden = true
+        cancelButton?.isHidden = true
         countdown?.invalidate()
         countdown = nil
         countLabel?.stringValue = ""
@@ -301,16 +304,20 @@ final class ConfirmPanel {
 
     /// 供外部更新状态行
     func updateStatus(_ text: String) {
+        let currentSession = sessionID
         DispatchQueue.main.async { [weak self] in
-            self?.statusLabel?.stringValue = text
+            guard let self, self.sessionID == currentSession else { return }
+            self.statusLabel?.stringValue = text
         }
     }
 
     /// 完成收尾：延时关闭，给用户看一眼状态
     func finish(after delay: TimeInterval = 1.0) {
+        let currentSession = sessionID
         DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
-            self?.finished = true
-            self?.close()
+            guard let self, self.sessionID == currentSession else { return }
+            self.finished = true
+            self.close()
         }
     }
 

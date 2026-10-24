@@ -59,7 +59,7 @@ final class PresenceMonitor: NSObject {
     /// 超过宽限期仍没见过 → 判「离开」，否则 App 重启后只要设备一直不广播，
     /// 状态就会永远停在「未知」，自动锁屏彻底失效。
     private let unknownGracePeriod: TimeInterval = 30
-    private let startedAt = Date()
+    private var trustedSince: [String: Date] = [:]
     private let historyLength = 60
 
     private var central: CBCentralManager!
@@ -258,6 +258,11 @@ final class PresenceMonitor: NSObject {
         }
 
         let now = Date()
+        let trustedSet = Set(trusted)
+        trustedSince = trustedSince.filter { trustedSet.contains($0.key) }
+        for id in trusted where trustedSince[id] == nil {
+            trustedSince[id] = now
+        }
         var bestEMA: Double? = nil
         var mostRecentAge: TimeInterval = .infinity
 
@@ -297,12 +302,18 @@ final class PresenceMonitor: NSObject {
         // 没有任何新鲜读数
         // 从没见过任何信任设备的广播（刚启动 / 刚勾选）→ 未知，而不是「离开」，
         // 否则每次启动都会立刻触发一次自动锁屏倒计时。
+        let waitingForNewDevice = trusted.contains { id in
+            guard let selectedAt = trustedSince[id],
+                  now.timeIntervalSince(selectedAt) < unknownGracePeriod else { return false }
+            let lastSeen = devices[id]?.lastSeen ?? .distantPast
+            return lastSeen < selectedAt
+        }
+        if waitingForNewDevice {
+            setPresence(.unknown)
+            return
+        }
         if mostRecentAge == .infinity {
-            if Date().timeIntervalSince(startedAt) < unknownGracePeriod {
-                setPresence(.unknown)
-            } else {
-                setPresence(.absent)
-            }
+            setPresence(.absent)
             return
         }
         if mostRecentAge >= staleThreshold {

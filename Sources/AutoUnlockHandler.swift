@@ -71,16 +71,16 @@ final class AutoUnlockHandler {
         guard !attemptedThisSession, !passwordSuspect, !busy else { return }
 
         // F2 只认「解锁主设备」
-        guard let primary = s.primaryDeviceID else { return }
+        guard let primary = s.primaryDeviceID else { reset(); return }
         guard let rssi = PresenceMonitor.shared.liveRSSI(primary),
               rssi >= s.unlockThreshold else {
-            strongSince = nil
+            reset()
             return
         }
 
         guard LockReasonTracker.shared.canAutoUnlock else {
             // 手动锁屏保护中
-            strongSince = nil
+            reset()
             return
         }
 
@@ -116,6 +116,7 @@ final class AutoUnlockHandler {
 
     private func reset() {
         strongSince = nil
+        fastSince = nil
     }
 
     private func fire() {
@@ -181,6 +182,9 @@ final class AutoUnlockHandler {
             // 只等焦点真正到位，最多 200ms，不再盲睡
             let focusDeadline = Date().addingTimeInterval(0.2)
             while Date() < focusDeadline && !AX.isFocused(field) { usleep(20_000) }
+            let focusedElement = AX.focusedElement()
+            let canTypeSafely = AX.isFocused(field)
+                && focusedElement.map { AX.pidOf($0) == pid && CFEqual($0, field) } == true
 
             // AX 直接写值最稳：不依赖键盘焦点、不受输入法/布局影响。
             // Phase 0 实测 AX 写值和 CGEventPost 都能进 Secure Input 的框。
@@ -188,9 +192,16 @@ final class AutoUnlockHandler {
             Log.info("密码框 \(all.count) 个，聚焦 err=\(focusErr.rawValue)，写值 err=\(setErr.rawValue)")
 
             if setErr != .success {
+                guard canTypeSafely else {
+                    Log.error("AX 写值失败且未确认密码框焦点，取消本次注入")
+                    self.abortTransient("无法确认锁屏密码框焦点")
+                    return
+                }
                 Log.warn("AX 写值失败，回退到合成键盘输入")
-                let ok = injector.typeText(password, perCharDelayMS: 12)
-                if !ok { Log.error("合成键盘输入也失败了") }
+                guard injector.typeText(password, perCharDelayMS: 12) else {
+                    self.fail(password: password, reason: "密码未能完整写入，已取消提交")
+                    return
+                }
             }
             // 按钮可能晚几十毫秒才可用，最多等 300ms
             var submitted = false

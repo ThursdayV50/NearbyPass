@@ -72,11 +72,20 @@ final class AutoLockHandler {
             DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
                 if SessionMonitor.screenIsLocked {
                     Log.info("锁屏成功（osascript）")
-                } else {
-                    Log.error("锁屏失败，最后尝试 displaysleepnow")
-                    self.lockViaDisplaySleep()
+                    self.busy = false
+                    return
                 }
-                self.busy = false
+                Log.error("锁屏失败，最后尝试 displaysleepnow")
+                self.lockViaDisplaySleep()
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
+                    if SessionMonitor.screenIsLocked {
+                        Log.info("锁屏成功（displaysleepnow）")
+                    } else {
+                        LockReasonTracker.shared.cancelSelfLock()
+                        Log.error("所有锁屏方式均未生效")
+                    }
+                    self.busy = false
+                }
             }
         }
     }

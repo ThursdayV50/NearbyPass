@@ -83,14 +83,10 @@ final class Updater {
                 } else {
                     state = .upToDate
                     Log.info("已是最新版本 \(Self.currentVersion)")
-                    if !silent { Dialogs.info("已是最新版本", "当前 \(Self.currentVersion)") }
                 }
             } catch {
                 state = .failed(error.localizedDescription)
                 Log.warn("检查更新失败: \(error.localizedDescription)")
-                if !silent {
-                    Dialogs.info("检查更新失败", error.localizedDescription)
-                }
             }
         }
     }
@@ -309,7 +305,7 @@ final class Updater {
                     return
                 }
                 state = .installing
-                try launchInstaller(dmg: dmg)
+                try launchInstaller(dmg: dmg, expectVersion: rel.version)
                 Log.info("更新脚本已启动，准备退出主进程")
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
                     NSApp.terminate(nil)
@@ -365,7 +361,7 @@ final class Updater {
         }
         // 2) 身份对得上：读 designated requirement，比对 identifier + 证书指纹
         let req = capture("/usr/bin/codesign", ["-d", "-r-", app]) ?? ""
-        guard req.contains("com.lcg.nearbypass"),
+        guard req.contains("identifier \"com.lcg.nearbypass\""),
               req.contains(expectedCertLeaf) else {
             Log.warn("更新校验：签名身份不匹配 —— \(req)")
             return false
@@ -385,9 +381,12 @@ final class Updater {
 
     // MARK: - 游离安装脚本
 
-    private func launchInstaller(dmg: URL, dryRun: Bool = false) throws {
+    private func launchInstaller(dmg: URL, expectVersion: String, dryRun: Bool = false) throws {
         let script = """
         #!/bin/bash
+        DMG="$1"
+        EXPECT_VERSION="$2"
+        EXPECTED_LEAF="$3"
         # 等 NearbyPass 退出
         for i in $(seq 1 60); do
           pgrep -x NearbyPass >/dev/null || break
@@ -397,13 +396,21 @@ final class Updater {
         MNT="/tmp/nearbypass_update_mnt"
         /usr/bin/hdiutil detach "$MNT" -quiet 2>/dev/null
         mkdir -p "$MNT"
-        /usr/bin/hdiutil attach "\(dmg.path)" -nobrowse -readonly -mountpoint "$MNT" -quiet || exit 1
+        /usr/bin/hdiutil attach "$DMG" -nobrowse -readonly -mountpoint "$MNT" -quiet || exit 1
+        APP="$MNT/NearbyPass.app"
+        [ -d "$APP" ] || exit 1
+        /usr/bin/codesign -v --strict "$APP" || exit 1
+        REQ=$(/usr/bin/codesign -d -r- "$APP" 2>&1)
+        [[ "$REQ" == *'identifier "com.lcg.nearbypass"'* ]] || exit 1
+        [[ "$REQ" == *"$EXPECTED_LEAF"* ]] || exit 1
+        VERSION=$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" "$APP/Contents/Info.plist") || exit 1
+        [ "$VERSION" = "$EXPECT_VERSION" ] || exit 1
         BK="/tmp/NearbyPass.app.bak"
         rm -rf "$BK"
         if [ -d "/Applications/NearbyPass.app" ]; then
           mv "/Applications/NearbyPass.app" "$BK" || exit 1
         fi
-        if /usr/bin/ditto "$MNT/NearbyPass.app" "/Applications/NearbyPass.app"; then
+        if /usr/bin/ditto "$APP" "/Applications/NearbyPass.app"; then
           rm -rf "$BK"
         else
           # 装失败就把旧的放回去，别让人没 App 用
@@ -412,7 +419,7 @@ final class Updater {
         fi
         /usr/bin/hdiutil detach "$MNT" -quiet 2>/dev/null
         /usr/bin/open -a "/Applications/NearbyPass.app"
-        rm -f "\(dmg.path)"
+        rm -f "$DMG"
         rm -f "$0"
         """
         let path = "/tmp/nearbypass-update-\(UUID().uuidString.prefix(8)).sh"
@@ -429,7 +436,7 @@ final class Updater {
 
         let p = Process()
         p.executableURL = URL(fileURLWithPath: "/bin/bash")
-        p.arguments = [path]
+        p.arguments = [path, dmg.path, expectVersion, expectedCertLeaf]
         try p.run()
     }
 
@@ -451,7 +458,7 @@ final class Updater {
     func debugInstallScript() {
         let dmg = URL(fileURLWithPath: "/tmp/fake.dmg")
         do {
-            try launchInstaller(dmg: dmg, dryRun: true)
+            try launchInstaller(dmg: dmg, expectVersion: Self.currentVersion, dryRun: true)
         } catch {
             print("失败: \(error.localizedDescription)")
         }

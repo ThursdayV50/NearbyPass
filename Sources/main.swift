@@ -1,12 +1,38 @@
+import AppKit
+
+func installAppBundle(from src: URL, to dst: URL) throws {
+    let fm = FileManager.default
+    let parent = dst.deletingLastPathComponent()
+    let token = UUID().uuidString
+    let staged = parent.appendingPathComponent(".\(dst.lastPathComponent).installing-\(token)")
+    let backup = parent.appendingPathComponent(".\(dst.lastPathComponent).backup-\(token)")
+    var hasBackup = false
+
+    do {
+        try fm.copyItem(at: src, to: staged)
+        if fm.fileExists(atPath: dst.path) {
+            try fm.moveItem(at: dst, to: backup)
+            hasBackup = true
+        }
+        do {
+            try fm.moveItem(at: staged, to: dst)
+        } catch {
+            if hasBackup { try? fm.moveItem(at: backup, to: dst) }
+            throw error
+        }
+        if hasBackup { try? fm.removeItem(at: backup) }
+    } catch {
+        try? fm.removeItem(at: staged)
+        throw error
+    }
+}
 
 // 自更新安装：把自己复制到 /Applications（App 自身不受 DSH 沙盒限制）
 if CommandLine.arguments.contains("--install-to-applications") {
     let src = Bundle.main.bundleURL
     let dst = URL(fileURLWithPath: "/Applications/NearbyPass.app")
-    let fm = FileManager.default
-    try? fm.removeItem(at: dst)
     do {
-        try fm.copyItem(at: src, to: dst)
+        try installAppBundle(from: src, to: dst)
         print("已安装到 \(dst.path)")
         exit(0)
     } catch {
@@ -16,7 +42,6 @@ if CommandLine.arguments.contains("--install-to-applications") {
 }
 
 // main.swift — 入口
-import AppKit
 
 // 调试：只查一次更新然后退出（不受单实例锁影响）
 if CommandLine.arguments.contains("--check-update") {

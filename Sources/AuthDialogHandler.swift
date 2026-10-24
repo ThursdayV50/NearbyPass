@@ -184,6 +184,16 @@ final class AuthDialogHandler {
 
     private func fill(pid: pid_t, windowNumber: Int) {
         busy = true
+        let settings = Settings.shared
+        guard settings.authFillEnabled, !settings.paused,
+              SessionMonitor.shared.state == .unlocked,
+              PresenceMonitor.shared.presence == .present else {
+            Log.info("确认后状态已变化，取消填写")
+            ConfirmPanel.shared.updateStatus("状态已变化，未填写")
+            ConfirmPanel.shared.finish(after: 1.0)
+            busy = false
+            return
+        }
         var password = KeychainStore.shared.load() ?? ""
 
         guard !password.isEmpty else {
