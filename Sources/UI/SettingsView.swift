@@ -20,10 +20,12 @@ struct SettingsView: View {
     /// 所有卡片；量高度时单独渲染它，才能拿到真实内容高度
     private var cards: some View {
         VStack(spacing: 12) {
+            // 开关放最上面：这三四个开关是日常唯一会动的东西，
+            // 之前排在最底下，要滚动才看得到「登录时自动启动」。
+            behaviorCard
             signalCard
             deviceCard
             thresholdCard
-            behaviorCard
         }
         .padding(.horizontal, 18)
         .padding(.bottom, 14)

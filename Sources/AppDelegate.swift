@@ -19,6 +19,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var lockItem: NSMenuItem!
     private var pauseItem: NSMenuItem!
     private var installItem: NSMenuItem!
+    private var loginItem: NSMenuItem!
 
     // MARK: - 生命周期
 
@@ -84,16 +85,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let forceTutorial = CommandLine.arguments.contains("--tutorial")
         let firstRun = !Settings.shared.hasCompletedOnboard
 
-        if forceTutorial || firstRun {
+        // 开机自启时不许弹任何窗口：登录后应该只看到菜单栏那个图标。
+        // 判据就用「登录项开着没有」——实测手动启动和 launchd 启动的进程环境完全一样
+        // （XPC_SERVICE_NAME 都是 application.com.lcg.nearbypass.*、XPC_FLAGS 都是 1），
+        // 没有任何环境变量能区分；而开了登录项之后最可能的情况就是登录时自动拉起。
+        // 想让它弹窗随时可以加 --settings / --tutorial。
+        let autoStarted = LoginItem.isEnabled && !forceSettings && !forceTutorial
+
+        if forceTutorial || (firstRun && !autoStarted) {
             Log.info(forceTutorial ? "命令行要求看教程" : "第一次启动，展示教程")
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.7) {
                 TutorialWindow.shared.show()
             }
-        } else if forceSettings || (!Settings.shared.isConfigured && !UserDefaults.standard.bool(forKey: "noAutoOpen")) {
+        } else if forceSettings || (!Settings.shared.isConfigured && !autoStarted
+                                    && !UserDefaults.standard.bool(forKey: "noAutoOpen")) {
             Log.info(forceSettings ? "命令行要求打开设置" : "尚未配置信任设备，打开设置引导")
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
                 SettingsWindow.shared.show()
             }
+        } else if autoStarted {
+            Log.info("静默启动：不弹窗，只驻留菜单栏")
         }
     }
 
@@ -158,6 +169,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         lockItem = makeItem("远离自动锁屏", #selector(toggleAutoLock))
         menu.addItem(lockItem)
 
+        loginItem = makeItem("登录时自动启动", #selector(toggleLoginItem))
+        menu.addItem(loginItem)
+
         menu.addItem(.separator())
 
         pauseItem = makeItem("暂停全部", #selector(togglePaused))
@@ -211,6 +225,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         fillItem.state = s.authFillEnabled ? .on : .off
         unlockItem.state = s.autoUnlockEnabled ? .on : .off
         lockItem.state = s.autoLockEnabled ? .on : .off
+        loginItem.state = LoginItem.isEnabled ? .on : .off
         pauseItem.title = s.paused ? "恢复运行" : "暂停全部"
         installItem.isHidden = isInstalled
     }
@@ -232,6 +247,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc private func toggleAutoLock() {
         Settings.shared.autoLockEnabled.toggle()
         Log.info("远离自动锁屏 → \(Settings.shared.autoLockEnabled ? "开" : "关")")
+        refreshStatus()
+    }
+
+    @objc private func toggleLoginItem() {
+        let on = !LoginItem.isEnabled
+        if let err = LoginItem.set(on) {
+            Log.error("登录项设置失败：\(err)")
+            Dialogs.info("登录项设置失败", err)
+        } else {
+            Log.info("登录项已\(on ? "启用" : "关闭")（\(LoginItem.statusText)）")
+            if LoginItem.needsApproval {
+                Dialogs.info("还差一步", "系统要求你到「系统设置 › 通用 › 登录项」里允许 NearbyPass。")
+            }
+        }
         refreshStatus()
     }
 
