@@ -251,6 +251,9 @@ final class Updater {
     // MARK: - 交互式入口（菜单 / 设置页按钮）
 
     func checkInteractive() {
+        // 已经在检查中就别再挂一遍回调：连点菜单项 + 设置页按钮时，
+        // 第二次的 prev 会指向上一次的劫持闭包，恢复后留下一个惰性闭包。
+        guard !checking else { return }
         var handled = false
         let prev = onStateChange
         onStateChange = { [weak self] st in

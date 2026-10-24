@@ -311,6 +311,17 @@ struct SettingsView: View {
                     get: { m.autoLock }, set: { m.setAutoLock($0) }))
                     .toggleStyle(.switch)
                     .tint(Color(white: 0.62)).font(.system(size: 11.5))
+                Toggle("登录时自动启动", isOn: Binding(
+                    get: { m.launchAtLogin }, set: { m.setLaunchAtLogin($0) }))
+                    .toggleStyle(.switch)
+                    .tint(Color(white: 0.62)).font(.system(size: 11.5))
+                if let problem = m.loginItemProblem {
+                    Text("登录项设置失败：\(problem)")
+                        .font(.system(size: 10.5)).foregroundStyle(.orange)
+                } else if m.loginItemNeedsApproval {
+                    Text("需要在「系统设置 › 通用 › 登录项」里允许 NearbyPass")
+                        .font(.system(size: 10.5)).foregroundStyle(.orange)
+                }
 
                 DisclosureGroup(isExpanded: $showAdvanced) {
                     VStack(alignment: .leading, spacing: 8) {

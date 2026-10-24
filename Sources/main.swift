@@ -43,6 +43,22 @@ if CommandLine.arguments.contains("--install-to-applications") {
 
 // main.swift — 入口
 
+// 登录项：查看 / 设置（排查"重启后没反应"时用）
+if CommandLine.arguments.contains("--login-item-status") {
+    print("登录项状态: \(LoginItem.statusText)  enabled=\(LoginItem.isEnabled)  requiresApproval=\(LoginItem.needsApproval)")
+    exit(0)
+}
+if CommandLine.arguments.contains("--login-item-enable") {
+    if let err = LoginItem.set(true) { print("注册失败: \(err)"); exit(1) }
+    print("注册结果: \(LoginItem.statusText)")
+    exit(0)
+}
+if CommandLine.arguments.contains("--login-item-disable") {
+    if let err = LoginItem.set(false) { print("取消失败: \(err)"); exit(1) }
+    print("取消结果: \(LoginItem.statusText)")
+    exit(0)
+}
+
 // 调试：只查一次更新然后退出（不受单实例锁影响）
 if CommandLine.arguments.contains("--check-update") {
     Task {

@@ -24,6 +24,9 @@ final class AutoUnlockHandler {
     private let verifyDelay: TimeInterval = 0.15
     /// 验证轮询间隔
     private let verifyPoll: TimeInterval = 0.15
+    /// 验证轮询次数：60 × 0.15s ≈ 9 秒。
+    /// 冷唤醒时 loginwindow 建 AX 树、动画、密码校验都可能超过 3 秒。
+    private let verifyPolls = 60
 
     private var strongSince: Date?
     /// 强信号计时
@@ -78,6 +81,14 @@ final class AutoUnlockHandler {
         guard let primary = s.primaryDeviceID else { reset(); return }
         guard let rssi = PresenceMonitor.shared.liveRSSI(primary),
               rssi >= s.unlockThreshold else {
+            reset()
+            return
+        }
+
+        /// presence 已经用 5dBm 迟滞带判过一轮，这里再要求"在场"是为了对齐两条判据：
+        /// 迟滞带允许 ema 停在 [-65,-60) 仍算「离开」，而 F2 用的是取整后的 -60，
+        /// 于是自动锁屏后可能立刻又被解开。要求 .present 后两条判据在同一时刻翻转。
+        guard PresenceMonitor.shared.presence == .present else {
             reset()
             return
         }
@@ -275,9 +286,18 @@ final class AutoUnlockHandler {
             finish(password: password, success: true)
             return
         }
-        if attempt >= 20 {
-            Log.error("自动解锁失败：仍处于锁屏状态")
-            fail(password: password, reason: "密码被拒绝或界面未响应")
+        if attempt >= verifyPolls {
+            // 绝不在这里判「密码错」：界面慢和密码错是两件事。
+            // 判成密码错会让整个锁屏会话直接放弃自动解锁，而判错的代价用户要自己输密码。
+            // 界面慢只是这一轮没赶上——放弃本次会话、不重试（避免重复提交同一个密码），
+            // 真正密码错的情况由系统自己弹提示，用户手动处理。
+            gaveUpThisSession = true
+            busy = false
+            var p = password
+            KeychainStore.zeroString(&p)
+            let secs = Int(Double(verifyPolls) * verifyPoll)
+            Log.error("自动解锁未完成：提交后约 \(secs) 秒仍处于锁屏状态，界面可能还没响应。本次锁屏不再尝试。")
+            Notifier.post(title: "自动解锁未完成", body: "提交后界面没有响应，请手动解锁。")
             return
         }
         DispatchQueue.main.asyncAfter(deadline: .now() + verifyPoll) { [weak self] in

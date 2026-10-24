@@ -56,6 +56,8 @@ final class AppModel: ObservableObject {
     @Published var axTrusted = false
     @Published var hasPassword = false
     @Published var bluetoothOn = false
+    @Published var launchAtLogin = LoginItem.isEnabled || LoginItem.needsApproval
+    @Published var loginItemProblem: String? = nil
 
     private var timer: Timer?
 
@@ -86,6 +88,9 @@ final class AppModel: ObservableObject {
         paused = s.paused
         showInMenuBar = s.showInMenuBar
         bluetoothOn = (p.bluetoothState == .poweredOn)
+        // 登录项状态以系统为准：用户可能直接在「系统设置 › 登录项」里改
+        let loggedIn = LoginItem.isEnabled || LoginItem.needsApproval
+        if loggedIn != launchAtLogin { launchAtLogin = loggedIn }
 
         // 曲线：取主设备（没有就取最强信任设备）
         let mainID = s.primaryDeviceID ?? s.trustedDeviceIDs.first
@@ -172,6 +177,20 @@ final class AppModel: ObservableObject {
     func setWearableOnly(_ on: Bool) {
         Settings.shared.wearableOnly = on
         refresh()
+    }
+
+    /// 已注册但用户还没在系统设置里放行
+    var loginItemNeedsApproval: Bool { LoginItem.needsApproval }
+
+    func setLaunchAtLogin(_ on: Bool) {
+        if let err = LoginItem.set(on) {
+            loginItemProblem = err
+            Log.error("登录项设置失败：\(err)")
+        } else {
+            loginItemProblem = nil
+            Log.info("登录项已\(on ? "启用" : "关闭")（\(LoginItem.statusText)）")
+        }
+        launchAtLogin = LoginItem.isEnabled || LoginItem.needsApproval
     }
 
     func rename(_ id: String, to name: String) {
