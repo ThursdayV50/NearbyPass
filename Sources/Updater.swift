@@ -122,10 +122,21 @@ final class Updater {
         req.timeoutInterval = 15
 
         let (data, resp) = try await URLSession.shared.data(for: req)
-        let code = (resp as? HTTPURLResponse)?.statusCode ?? -1
+        let http = resp as? HTTPURLResponse
+        let code = http?.statusCode ?? -1
         guard code == 200 else {
+            // 403 基本都是未认证配额用尽（60 次/小时）。把配额现场一起记下来，
+            // 否则日志里只有一个「API 返回 403」，下次分不清是限流还是别的原因。
+            var detail = ""
+            if let h = http {
+                let remaining = h.value(forHTTPHeaderField: "x-ratelimit-remaining") ?? "-"
+                let limit = h.value(forHTTPHeaderField: "x-ratelimit-limit") ?? "-"
+                let resource = h.value(forHTTPHeaderField: "x-ratelimit-resource") ?? "-"
+                let retryAfter = h.value(forHTTPHeaderField: "retry-after") ?? "-"
+                detail = "，配额 \(remaining)/\(limit) \(resource)，retry-after \(retryAfter)"
+            }
             throw NSError(domain: "NearbyPass", code: 1,
-                          userInfo: [NSLocalizedDescriptionKey: "API 返回 \(code)"])
+                          userInfo: [NSLocalizedDescriptionKey: "API 返回 \(code)\(detail)"])
         }
         guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
             throw NSError(domain: "NearbyPass", code: 2,

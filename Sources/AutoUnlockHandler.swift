@@ -35,6 +35,9 @@ final class AutoUnlockHandler {
     private var attemptedThisSession = false
     /// 密码疑似错误 —— 本会话内不再尝试
     private var passwordSuspect = false
+    /// 界面始终没就绪、重试用尽 —— 本会话内不再尝试。
+    /// 和 passwordSuspect 分开：那不是密码错，不能让日志和通知说成密码错。
+    private var gaveUpThisSession = false
     private var busy = false
     /// 界面没就绪（屏保没退、密码框还没出来）导致的重试次数
     private var transientRetries = 0
@@ -58,6 +61,7 @@ final class AutoUnlockHandler {
     func onSessionLocked() {
         attemptedThisSession = false
         passwordSuspect = false
+        gaveUpThisSession = false
         transientRetries = 0
         strongSince = nil
         fastSince = nil
@@ -68,7 +72,7 @@ final class AutoUnlockHandler {
         let s = Settings.shared
         guard s.autoUnlockEnabled, !s.paused else { reset(); return }
         guard SessionMonitor.shared.state == .locked else { reset(); return }
-        guard !attemptedThisSession, !passwordSuspect, !busy else { return }
+        guard !attemptedThisSession, !passwordSuspect, !gaveUpThisSession, !busy else { return }
 
         // F2 只认「解锁主设备」
         guard let primary = s.primaryDeviceID else { reset(); return }
@@ -135,26 +139,24 @@ final class AutoUnlockHandler {
         injectPassword(password)
     }
 
-    /// 返回 loginwindow 的 pid
-    private func loginWindowPid() -> pid_t? {
+    /// 所有 loginwindow 进程。锁屏界面和登录窗口前置 UI 可能各有一个，
+    /// 只取第一个会偶发「锁屏界面里找不到密码框」——那次拿到的那个进程并没有锁屏密码框。
+    private func loginWindowPids() -> [pid_t] {
         let p = Process()
         p.executableURL = URL(fileURLWithPath: "/usr/bin/pgrep")
         p.arguments = ["-x", "loginwindow"]
         let pipe = Pipe()
         p.standardOutput = pipe
-        do { try p.run() } catch { return nil }
+        do { try p.run() } catch { return [] }
         p.waitUntilExit()
         let data = pipe.fileHandleForReading.readDataToEndOfFile()
-        guard let text = String(data: data, encoding: .utf8) else { return nil }
-        // 取第一个 pid（锁屏主界面那个）
-        for line in text.split(separator: "\n") {
-            if let pid = pid_t(line.trimmingCharacters(in: .whitespaces)) { return pid }
-        }
-        return nil
+        guard let text = String(data: data, encoding: .utf8) else { return [] }
+        return text.split(separator: "\n").compactMap { pid_t($0.trimmingCharacters(in: .whitespaces)) }
     }
 
     private func injectPassword(_ password: String) {
-        guard let pid = loginWindowPid() else {
+        let pids = loginWindowPids()
+        guard !pids.isEmpty else {
             // loginwindow 还没起来，等一下再说，不算失败
             abortTransient("loginwindow 还没就绪")
             return
@@ -162,16 +164,28 @@ final class AutoUnlockHandler {
 
         // 屏保挡在锁屏界面前面时，Return 会打给屏保而不是密码框，
         // 先合成一次 Shift 把屏保退掉（Shift 在密码框里没有副作用）。
-        var fieldDeadline = Date().addingTimeInterval(6)
+        // 等待时间随重试次数放大：刚唤醒时锁屏 UI 建 AX 树可能比 6 秒慢。
+        var fieldDeadline = Date().addingTimeInterval(6 + Double(transientRetries) * 4)
         if screensaverRunning() {
             Log.info("检测到屏保正在运行，先退出屏保")
             nudgeUserInput()
-            fieldDeadline = Date().addingTimeInterval(8)
+            fieldDeadline = Date().addingTimeInterval(8 + Double(transientRetries) * 4)
         }
 
-        findSecureField(pid: pid, deadline: fieldDeadline) { [weak self] field in
+        findSecureField(pids: pids, deadline: fieldDeadline) { [weak self] found in
             guard let self = self else { return }
-            guard let field = field else {
+            guard let (field, pid) = found else {
+                // 等密码框的这几秒里可能被手动解锁了，先确认再判失败
+                if !SessionMonitor.screenIsLocked {
+                    Log.info("已解锁（等待密码框期间确认）")
+                    self.finish(password: password, success: true)
+                    return
+                }
+                if !AX.isTrusted {
+                    Log.error("辅助功能权限失效，无法读取锁屏密码框")
+                    self.fail(password: password, reason: "辅助功能权限已失效")
+                    return
+                }
                 self.abortTransient("锁屏界面里找不到密码框")
                 return
             }
@@ -229,23 +243,27 @@ final class AutoUnlockHandler {
         }
     }
 
+    /// 在所有 loginwindow 进程里找密码框，返回「元素 + 它所属的 pid」。
+    /// 优先已聚焦的那个；找不到就等到 deadline。
     private func findSecureField(
-        pid: pid_t,
+        pids: [pid_t],
         deadline: Date,
         attempt: Int = 0,
-        completion: @escaping (AXUIElement?) -> Void
+        completion: @escaping ((AXUIElement, pid_t)?) -> Void
     ) {
-        let fields = AX.secureFields(pid: pid)
-        if let f = fields.first(where: { AX.isFocused($0) }) ?? fields.first {
-            completion(f)
-            return
+        for pid in pids {
+            let fields = AX.secureFields(pid: pid)
+            if let f = fields.first(where: { AX.isFocused($0) }) ?? fields.first {
+                completion((f, pid))
+                return
+            }
         }
         guard Date() < deadline else {
             completion(nil)
             return
         }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in
-            self?.findSecureField(pid: pid, deadline: deadline, attempt: attempt + 1, completion: completion)
+            self?.findSecureField(pids: pids, deadline: deadline, attempt: attempt + 1, completion: completion)
         }
     }
 
@@ -296,7 +314,8 @@ final class AutoUnlockHandler {
         attemptedThisSession = false
         transientRetries += 1
         if transientRetries >= maxTransientRetries {
-            passwordSuspect = true
+            // 用尽重试也不等于密码错：只封本次锁屏会话，不动 passwordSuspect
+            gaveUpThisSession = true
             Log.error("自动解锁放弃：\(reason)（已尝试 \(transientRetries) 次）")
             Notifier.post(title: "自动解锁未完成", body: "\(reason)。请手动解锁。")
         } else {

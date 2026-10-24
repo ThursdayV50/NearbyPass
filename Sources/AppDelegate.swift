@@ -23,7 +23,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // MARK: - 生命周期
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        Log.info("NearbyPass 启动 v1.0")
+        Log.info("NearbyPass 启动 v\(Updater.currentVersion)")
         Settings.shared.migrateAutoAliasesIfNeeded()
         // 锁屏 / 屏保时别被 App Nap 降频，否则蓝牙采样和定时器会被拖慢甚至停摆
         activityToken = ProcessInfo.processInfo.beginActivity(
