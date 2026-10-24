@@ -215,6 +215,17 @@ struct FieldPane: View {
         primary?.rssi ?? m.bestRSSI
     }
 
+    /// 设过主设备但它此刻没在广播：标题要说清是"不在附近"，不是"没选"
+    private var titleName: String {
+        if let p = primary { return p.name }
+        return m.primaryName.isEmpty ? "未选主设备" : "\(m.primaryName) · 不在附近"
+    }
+
+    private var awayNote: String {
+        if primary == nil, !m.primaryName.isEmpty { return "没收到它的广播" }
+        return m.unlockPrediction.ok ? "会自动解锁" : "不会解锁"
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(alignment: .firstTextBaseline) {
@@ -222,7 +233,7 @@ struct FieldPane: View {
                     .font(Theme.text(10, .medium))
                     .foregroundStyle(Theme.ink3)
                 Spacer(minLength: 6)
-                Text(primary?.name ?? "未选主设备")
+                Text(titleName)
                     .font(Theme.text(10))
                     .foregroundStyle(Theme.ink3)
                     .lineLimit(1)
@@ -260,9 +271,9 @@ struct FieldPane: View {
                         Text("此刻若锁屏")
                             .font(Theme.text(9.5))
                             .foregroundStyle(Theme.ink3)
-                        Text(m.unlockPrediction.ok ? "会自动解锁" : "不会解锁")
+                        Text(awayNote)
                             .font(Theme.text(11.5, .medium))
-                            .foregroundStyle(m.unlockPrediction.ok ? Theme.signal : Theme.ink2)
+                            .foregroundStyle(m.unlockPrediction.ok && primary != nil ? Theme.signal : Theme.ink2)
                     }
                 }
                 .padding(.horizontal, 18)

@@ -42,6 +42,27 @@ final class AppModel: ObservableObject {
     /// 主设备不是手机/手环（例如被设成了键盘），自动锁屏会失效
     @Published var primaryIsWeak = false
     /// 主设备名：不看它此刻在不在广播里，只要设过就有名字
+    /// 同名多 MAC（耳机、手环常见）合成一行：优先留已勾选/主设备那条，否则留信号最强的。
+    /// 勾选和星标仍作用于代表行的 id，所以状态不会因为合并而丢。
+    var displayDevices: [DeviceVM] {
+        var best: [String: DeviceVM] = [:]
+        var order: [String] = []
+        func rank(_ d: DeviceVM) -> Int {
+            (d.primary ? 2 : 0) + (d.trusted ? 1 : 0)
+        }
+        for d in devices {
+            if let old = best[d.name] {
+                let better = rank(d) > rank(old)
+                    || (rank(d) == rank(old) && (d.rssi ?? -999) > (old.rssi ?? -999))
+                if better { best[d.name] = d }
+            } else {
+                best[d.name] = d
+                order.append(d.name)
+            }
+        }
+        return order.compactMap { best[$0] }
+    }
+
     var primaryName: String {
         guard let id = Settings.shared.primaryDeviceID else { return "" }
         return PresenceMonitor.shared.displayName(id)
@@ -230,7 +251,9 @@ final class AppModel: ObservableObject {
 
     /// 现在这一刻如果锁屏，会不会自动解锁
     var unlockPrediction: (text: String, ok: Bool) {
-        guard let best = bestRSSI else {
+        // 和场里那个点、列表那一行同源，否则会出现"点在外环却说要解锁"
+        let live = devices.first(where: { $0.primary })?.rssi ?? bestRSSI
+        guard let best = live else {
             return ("还没收到任何信任设备的信号", false)
         }
         if best >= unlockThreshold {

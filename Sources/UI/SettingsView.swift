@@ -103,7 +103,10 @@ struct SettingsView: View {
 
     private var pillText: String {
         guard m.bluetoothOn else { return "蓝牙已关闭" }
-        if let r = m.bestRSSI { return "\(m.presenceText) · \(r) dBm" }
+        // 和列表里那一行同源：都取瞬时 RSSI，免得两处差 1 dB
+        if let r = m.devices.first(where: { $0.primary })?.rssi ?? m.bestRSSI {
+            return "\(m.presenceText) · \(r) dBm"
+        }
         return m.presenceText
     }
 
@@ -250,7 +253,7 @@ struct SettingsView: View {
                 } else {
                     ScrollView(.vertical, showsIndicators: false) {
                         VStack(spacing: 0) {
-                            ForEach(m.devices) { d in
+                            ForEach(m.displayDevices) { d in
                                 deviceRow(d)
                                 Rectangle()
                                     .fill(Theme.hair2)

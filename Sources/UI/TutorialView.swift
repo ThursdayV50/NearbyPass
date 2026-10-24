@@ -240,21 +240,6 @@ private struct DevicePage: View {
 
     private var hasPrimary: Bool { !m.primaryName.isEmpty }
 
-    /// 同名多 MAC 的设备（耳机、手环常见）合成一行，避免出现三条一模一样的记录
-    private var rows: [DeviceVM] {
-        var best: [String: DeviceVM] = [:]
-        var order: [String] = []
-        for d in m.devices {
-            if let old = best[d.name] {
-                if (d.rssi ?? -999) > (old.rssi ?? -999) { best[d.name] = d }
-            } else {
-                best[d.name] = d
-                order.append(d.name)
-            }
-        }
-        return order.compactMap { best[$0] }
-    }
-
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             head("挑一台随身设备",
@@ -262,7 +247,7 @@ private struct DevicePage: View {
 
             ScrollView(.vertical, showsIndicators: false) {
                 VStack(spacing: 0) {
-                    ForEach(rows) { d in
+                    ForEach(m.displayDevices) { d in
                         row(d)
                         Rectangle().fill(Theme.hair2).frame(height: 1)
                     }
