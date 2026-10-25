@@ -9,6 +9,7 @@
 import Foundation
 import CoreGraphics
 import Carbon.HIToolbox
+import IOKit.pwr_mgt
 
 final class AutoUnlockHandler {
 
@@ -175,13 +176,14 @@ final class AutoUnlockHandler {
 
         // 屏保挡在锁屏界面前面时，Return 会打给屏保而不是密码框，
         // 先合成一次 Shift 把屏保退掉（Shift 在密码框里没有副作用）。
-        // 等待时间随重试次数放大：刚唤醒时锁屏 UI 建 AX 树可能比 6 秒慢。
-        var fieldDeadline = Date().addingTimeInterval(6 + Double(transientRetries) * 4)
-        if screensaverRunning() {
-            Log.info("检测到屏保正在运行，先退出屏保")
-            nudgeUserInput()
-            fieldDeadline = Date().addingTimeInterval(8 + Double(transientRetries) * 4)
-        }
+        //
+        // 但「找不到密码框」不止发生在屏保：屏幕锁了十几分钟再回来，登录窗口可能
+        // 停在时钟页或「点一下继续」的姿态，密码框根本没被创建出来，光等是等不到的。
+        // 所以每次尝试之前都敲一下，不管屏保在不在。
+        let screenSaver = screensaverRunning()
+        if screenSaver { Log.info("检测到屏保正在运行，先退出屏保") }
+        nudgeUserInput()
+        var fieldDeadline = Date().addingTimeInterval((screenSaver ? 8 : 6) + Double(transientRetries) * 4)
 
         findSecureField(pids: pids, deadline: fieldDeadline) { [weak self] found in
             guard let self = self else { return }
@@ -197,6 +199,7 @@ final class AutoUnlockHandler {
                     self.fail(password: password, reason: "辅助功能权限已失效")
                     return
                 }
+                self.logLockUI(pids)
                 self.abortTransient("锁屏界面里找不到密码框")
                 return
             }
@@ -317,8 +320,27 @@ final class AutoUnlockHandler {
         return p.terminationStatus == 0
     }
 
-    /// 合成一次 Shift 按键：任何真实输入都能让屏保退出
+    /// 找不到密码框时把锁屏界面长什么样记进日志，下次不用猜
+    private func logLockUI(_ pids: [pid_t]) {
+        for pid in pids {
+            let windows = AX.windowCount(pid: pid)
+            let texts = AX.staticTexts(pid: pid).prefix(4).joined(separator: " / ")
+            let buttons = AX.buttons(pid: pid).map { $0.label }.filter { !$0.isEmpty }
+                .prefix(6).joined(separator: " / ")
+            Log.warn("锁屏界面 pid=\(pid) 窗口=\(windows) 文字=[\(texts)] 按钮=[\(buttons)]")
+        }
+    }
+
+    /// 唤醒锁屏界面：屏幕黑着（blackshield）时密码框根本不存在，得先点亮它
     private func nudgeUserInput() {
+        // 合成按键点亮不了 blackshield 状态的显示器——系统只认「声明用户活动」。
+        // 这一步会真正把显示器唤醒，锁屏界面这才开始建窗口。
+        var assertion: IOPMAssertionID = 0
+        _ = IOPMAssertionDeclareUserActivity("NearbyPass 唤醒锁屏界面" as CFString,
+                                            kIOPMUserActiveLocal, &assertion)
+
+        // 再补一次真实输入事件：让屏保或锁屏控制器把界面推到「输入密码」那一态
+        usleep(120_000)
         let src = CGEventSource(stateID: .hidSystemState)
         src?.localEventsSuppressionInterval = 0
         let down = CGEvent(keyboardEventSource: src, virtualKey: CGKeyCode(kVK_Shift), keyDown: true)
