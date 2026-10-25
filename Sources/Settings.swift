@@ -109,8 +109,8 @@ final class Settings {
 
     /// 远离后多久锁屏（秒），15–300
     var autoLockDelay: Double {
-        get { max(15, min(300, d.double(forKey: K.autoLockDelay))) }
-        set { d.set(max(15, min(300, newValue)), forKey: K.autoLockDelay) }
+        get { max(0, min(300, d.double(forKey: K.autoLockDelay))) }
+        set { d.set(max(0, min(300, newValue)), forKey: K.autoLockDelay) }
     }
 
     /// 授权弹窗填充的冷却（秒）

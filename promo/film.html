@@ -1,0 +1,685 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>NearbyPass film</title>
+<style>
+@font-face{font-family:Inter;font-weight:400;src:url(node_modules/@fontsource/inter/files/inter-latin-400-normal.woff2)}
+@font-face{font-family:Inter;font-weight:500;src:url(node_modules/@fontsource/inter/files/inter-latin-500-normal.woff2)}
+@font-face{font-family:Inter;font-weight:600;src:url(node_modules/@fontsource/inter/files/inter-latin-600-normal.woff2)}
+@font-face{font-family:JBM;font-weight:400;src:url(node_modules/@fontsource/jetbrains-mono/files/jetbrains-mono-latin-400-normal.woff2)}
+@font-face{font-family:JBM;font-weight:500;src:url(node_modules/@fontsource/jetbrains-mono/files/jetbrains-mono-latin-500-normal.woff2)}
+html,body{margin:0;background:#E7EAEB;overflow:hidden}
+canvas{display:block}
+</style>
+</head>
+<body>
+<canvas id="c" width="1920" height="1080"></canvas>
+<script>
+// Everything on screen is computed from t inside render(t). No timers, no CSS animation,
+// no state carried between frames.
+
+const W = 1920, H = 1080, BEAT = 0.5;
+
+// Scenes are authored on a 0.5 s grid ("old beats"). The film plays them at 96 BPM, one or two real beats per
+// old beat: text-heavy beats get two so they can be read. Old beats 25–28 (the code shot) are cut.
+// music.mjs builds the same table, so picture and music share one grid.
+const NB = 60 / 96;
+const SKIP = new Set([25, 26, 27, 28]);
+const DOUBLE = new Set([13, 14, 19, 23, 24, 29, 30, 31, 32, 34, 35, 36, 40, 42, 47, 48]);
+const SEG = [];
+{ let acc = 0; for (let b = 1; b <= 48; b++) { if (SKIP.has(b)) continue; const n = DOUBLE.has(b) ? 2 : 1; SEG.push({ o: (b - 1) * BEAT, t: acc, d: n * NB }); acc += n * NB; } }
+const END = SEG[SEG.length - 1].t + SEG[SEG.length - 1].d;
+function sceneTime(t) {
+  if (t <= 0) return 0;
+  for (let i = SEG.length - 1; i >= 0; i--) if (t >= SEG[i].t) return SEG[i].o + Math.min(1, (t - SEG[i].t) / SEG[i].d) * BEAT;
+  return 0;
+}
+const COL = {
+  paper: '#E7EAEB', sheet: '#F4F5F6', sheet2: '#FBFBFC',
+  ink: '#15191B', ink2: '#4C5359', ink3: '#8A9197',
+  signal: '#8B5E00', signalDark: '#C99A3E', graphite: '#3A4145',
+  body: '#DC7958', eye: '#1A1A1A',
+};
+const main = document.getElementById('c').getContext('2d');
+const accA = Object.assign(document.createElement('canvas'), { width: W, height: H }).getContext('2d');
+const accB = Object.assign(document.createElement('canvas'), { width: W, height: H }).getContext('2d');
+let g = main;
+
+// ---------- math ----------
+const clamp = (x, a = 0, b = 1) => Math.min(b, Math.max(a, x));
+const lerp = (a, b, p) => a + (b - a) * p;
+const frac = x => x - Math.floor(x);
+const hash = n => frac(Math.sin(n * 127.1 + 311.7) * 43758.5453);
+function rgba(hex, a = 1) {
+  const n = parseInt(hex.slice(1), 16);
+  return `rgba(${n >> 16},${(n >> 8) & 255},${n & 255},${a})`;
+}
+function mixHex(a, b, p) {
+  const x = parseInt(a.slice(1), 16), y = parseInt(b.slice(1), 16);
+  const c = s => Math.round(lerp((x >> s) & 255, (y >> s) & 255, p));
+  return `rgb(${c(16)},${c(8)},${c(0)})`;
+}
+
+// Closed-form spring step response (0 → 1). z = 1 is critical; z < 1 only for the mascot's body.
+function step(dt, w = 14, z = 1) {
+  if (dt <= 0) return 0;
+  if (z >= 1) return 1 - (1 + w * dt) * Math.exp(-w * dt);
+  const wd = w * Math.sqrt(1 - z * z);
+  return 1 - Math.exp(-z * w * dt) * (Math.cos(wd * dt) + (z / Math.sqrt(1 - z * z)) * Math.sin(wd * dt));
+}
+// A value retargeted many times = sum of each change's own spring response. Still a pure function of t.
+function track(keys, t, w = 14, z = 1) {
+  let v = keys[0][1];
+  for (let i = 1; i < keys.length; i++) v += (keys[i][1] - keys[i - 1][1]) * step(t - keys[i][0], w, z);
+  return v;
+}
+// Damped kick for squash & stretch (positive = squash)
+function kick(t, t0, amp, w = 26, z = 0.42) {
+  const d = t - t0; if (d < 0) return 0;
+  const wd = w * Math.sqrt(1 - z * z);
+  return amp * Math.exp(-z * w * d) * Math.cos(wd * d);
+}
+const on = (t, t0) => t >= t0;
+const typed = (str, t, t0, cps = 42) => str.slice(0, clamp(Math.floor((t - t0) * cps), 0, str.length));
+
+// Beat 37 accent: 0.35x for two frames, then 1.8x to catch up.
+function warp(t) {
+  const A = 18, slow = 2 / 60, eps = 0.65 * slow, d = eps / 0.8;
+  if (t < A) return t;
+  if (t < A + slow) return A + 0.35 * (t - A);
+  if (t < A + slow + d) return A + 0.35 * slow + 1.8 * (t - A - slow);
+  return t;
+}
+
+// ---------- drawing primitives ----------
+function text(str, x, y, o = {}) {
+  g.save();
+  g.font = `${o.weight || 500} ${o.size || 32}px ${o.mono ? 'JBM, "PingFang SC"' : 'Inter, "PingFang SC"'}`;
+  g.letterSpacing = (o.track ?? (o.mono ? 0 : -0.02 * (o.size || 32))) + 'px';
+  g.textBaseline = o.base || 'alphabetic';
+  g.globalAlpha *= o.alpha ?? 1;
+  g.fillStyle = o.color || COL.ink;
+  let w;
+  if (o.mono) {
+    // one glyph at a time: JetBrains Mono would otherwise ligate >= and == into glyphs that aren't in the source
+    const chars = [...str], adv = chars.map(c => g.measureText(c).width);
+    w = adv.reduce((a, b) => a + b, 0);
+    let cx = o.align === 'center' ? x - w / 2 : o.align === 'right' ? x - w : x;
+    g.textAlign = 'left';
+    chars.forEach((c, i) => { g.fillText(c, cx, y); cx += adv[i]; });
+  } else {
+    g.textAlign = o.align || 'left';
+    g.fillText(str, x, y);
+    w = g.measureText(str).width;
+  }
+  g.restore();
+  return w;
+}
+function measure(str, o = {}) {
+  if (o.mono) { g.save(); g.font = `${o.weight || 500} ${o.size || 32}px JBM`; const w = [...str].reduce((a, c) => a + g.measureText(c).width, 0); g.restore(); return w; }
+  g.save();
+  g.font = `${o.weight || 500} ${o.size || 32}px Inter, "PingFang SC"`;
+  g.letterSpacing = (o.track ?? (o.mono ? 0 : -0.02 * (o.size || 32))) + 'px';
+  const w = g.measureText(str).width; g.restore(); return w;
+}
+function rrect(x, y, w, h, r) {
+  g.beginPath(); g.roundRect(x, y, w, h, r);
+}
+function circle(x, y, r) { g.beginPath(); g.arc(x, y, Math.max(0, r), 0, Math.PI * 2); }
+function bg(color) { g.fillStyle = color; g.fillRect(0, 0, W, H); }
+
+// ---------- mascot ----------
+// Square body, two inward wedge eyes (left >, right <), stub arms, four short legs, no mouth.
+function drawMascot(m) {
+  if (!m || m.alpha <= 0) return;
+  const u = m.u, s = clamp(m.squash, -0.35, 0.45);
+  g.save();
+  g.globalAlpha *= m.alpha ?? 1;
+  g.translate(m.x, m.y + (m.bob || 0));
+  g.scale(1 + 0.6 * s, 1 - s);
+  const bodyC = m.inverted ? COL.paper : COL.body;
+  const eyeC = m.inverted ? COL.ink : COL.eye;
+  g.fillStyle = bodyC;
+  for (const lx of [-5.6, -3.2, 2.0, 4.4]) g.fillRect(lx * u, -2.2 * u, 1.2 * u, 2.2 * u);
+  g.fillRect(-7 * u, -12.2 * u, 14 * u, 10.2 * u);
+  // arms pivot where they meet the body
+  for (const side of [-1, 1]) {
+    const ang = side < 0 ? (m.armL || 0) : (m.armR || 0);
+    g.save();
+    g.translate(side * 7 * u, -7.4 * u);
+    g.rotate(-side * ang * Math.PI / 180);
+    g.fillRect(side < 0 ? -2.4 * u : 0, -1 * u, 2.4 * u, 2 * u);
+    g.restore();
+  }
+  // eyes: filled wedges
+  const open = clamp(m.eye ?? 0.86, 0.05, 1), lk = (m.look || 0) * u;
+  g.fillStyle = eyeC;
+  const ey = -8.4 * u;
+  g.beginPath(); // left eye >
+  g.moveTo(-4.3 * u + lk, ey - 1.5 * u * open); g.lineTo(-2.0 * u + lk, ey); g.lineTo(-4.3 * u + lk, ey + 1.5 * u * open); g.closePath(); g.fill();
+  g.beginPath(); // right eye <
+  g.moveTo(4.3 * u + lk, ey - 1.5 * u * open); g.lineTo(2.0 * u + lk, ey); g.lineTo(4.3 * u + lk, ey + 1.5 * u * open); g.closePath(); g.fill();
+  g.restore();
+}
+
+const TALK = [[4.0, 5.7], [6.0, 7.3], [11.0, 11.45], [16.0, 16.4]];
+function talkMods(s) {
+  const talking = TALK.some(([a, b]) => s >= a && s < b);
+  if (!talking) return { bob: 0, eye: 0.86 };
+  const k = Math.floor(s * 8);                       // syllable index
+  const dir = hash(k) < 0.5 ? -1 : 1;                // per-syllable random direction
+  return { bob: dir * 2 * Math.sin(Math.PI * frac(s * 8)), eye: k % 2 ? 0.72 : 0.86 };
+}
+function blink(s, times) {
+  for (const b of times) if (s >= b && s < b + 0.1) return 0.08;
+  return null;
+}
+const hop = (s, t0, dur, h) => { const p = (s - t0) / dur; return p > 0 && p < 1 ? -4 * h * p * (1 - p) : 0; };
+
+function mascotAt(s) {
+  const tm = talkMods(s);
+  let m = { x: -300, y: 880, u: 11, squash: 0, armL: 0, armR: 0, look: 0, eye: tm.eye, bob: tm.bob, alpha: 1, inverted: false };
+  if (s < 1.5) return null;
+  if (s < 7.75) {
+    m.x = track([[0, -220], [1.5, 300]], s, 15);
+    m.y = 880 + hop(s, 3.52, 0.3, 64);
+    m.squash = kick(s, 1.64, 0.2) + kick(s, 3.5, 0.08) + kick(s, 3.82, 0.16);
+    m.look = s > 3.6 ? 1 : 0;
+    m.armR = 38 * step(s - 4.0, 16) - 38 * step(s - 5.9, 10);
+    m.eye = blink(s, [1.9, 5.85]) ?? m.eye;
+  } else if (s < 10.0) {
+    const p = clamp((s - 7.75) / 0.4);
+    m.x = lerp(300, 1650, p);
+    m.y = lerp(880, 330, p) - 4 * 430 * p * (1 - p);   // high arc: clears the field instead of passing through it
+    m.squash = kick(s, 7.75, 0.1) - (p > 0 && p < 1 ? 0.12 * Math.sin(Math.PI * p) : 0) + kick(s, 8.15, 0.24) + kick(s, 9.5, 0.12);
+    m.look = -1;
+    m.eye = blink(s, [9.1]) ?? m.eye;
+  } else if (s < 12.0) {
+    const p = step(s - 10.0, 22);
+    m.x = lerp(1650, 230, p);
+    m.y = lerp(330, 880, p) - 160 * Math.sin(Math.PI * clamp((s - 10) / 0.22));
+    m.squash = -0.2 * Math.sin(Math.PI * clamp((s - 10) / 0.22)) + kick(s, 10.22, 0.26);
+    m.look = 1;
+    m.armR = 26 * step(s - 10.9, 16);
+  } else if (s < 16.0) {
+    m.x = 1770; m.u = 10;
+    m.y = 1100 + track([[0, 0], [15.5, -150]], s, 18);
+    m.squash = kick(s, 15.62, 0.16);
+    m.look = -1.2;
+    m.eye = blink(s, [13.2, 14.9]) ?? m.eye;
+  } else if (s < 18.0) {
+    const spots = [[16.0, 220], [16.5, 1700], [17.0, 220], [17.5, 1700]];
+    let i = spots.findIndex(([a], k) => s >= a && (k === 3 || s < spots[k + 1][0]));
+    const [t0, x] = spots[i];
+    m.u = 9; m.x = x; m.y = 990 + 70 * (1 - step(s - t0, 26));
+    m.squash = kick(s, t0 + 0.06, 0.18);
+    m.look = x < 960 ? 1 : -1;
+    m.alpha = 1 - clamp((s - 17.75) / 0.2);
+  } else if (s < 21.0) {
+    m.inverted = true;
+    m.x = 380;
+    m.y = 860 - 900 * (1 - step(s - 18.0, 30));
+    m.squash = kick(s, 18.1, 0.3) + kick(s, 20.5, 0.1);
+    m.look = 1;
+    m.eye = blink(s, [19.75]) ?? m.eye;
+  } else if (s < 22.0) {
+    m.x = 960; m.y = 720;
+    const air = clamp((s - 21.56) / 0.36);
+    m.y += air > 0 && air < 1 ? -4 * 150 * air * (1 - air) : 0;
+    m.squash = kick(s, 21.0, 0.1) + (s >= 21.5 && s < 21.56 ? 0.25 * Math.sin(Math.PI * (s - 21.5) / 0.06) : 0)
+      - (air > 0 && air < 1 ? 0.22 * Math.sin(Math.PI * air) : 0) + kick(s, 21.92, 0.26);
+  } else if (s < 23.75) {
+    m.u = 8; m.x = 1560;
+    m.y = 560 - 500 * (1 - step(s - 22.0, 24));
+    m.squash = kick(s, 22.12, 0.2);
+    m.look = -1;
+    m.eye = 0.86 - 0.78 * step(s - 23.5, 12);
+  } else return null;
+  return m;
+}
+
+// ---------- cursor ----------
+function drawCursor(x, y, pressed) {
+  g.save();
+  g.translate(x, y);
+  const k = pressed ? 0.88 : 1; g.scale(1.25 * k, 1.25 * k);
+  g.beginPath();
+  g.moveTo(0, 0); g.lineTo(0, 30); g.lineTo(7, 23.5); g.lineTo(12, 34.5); g.lineTo(16.5, 32.5); g.lineTo(11.6, 21.8); g.lineTo(21, 21.8); g.closePath();
+  g.fillStyle = '#fff'; g.fill();
+  g.lineWidth = 1.8; g.strokeStyle = COL.ink; g.lineJoin = 'round'; g.stroke();
+  g.restore();
+}
+
+// ---------- distance field (after Sources/UI/FieldView.swift) ----------
+const radius = (dbm, sc) => (26 + 132 * Math.pow(clamp((-40 - dbm) / 55), 1.35)) * sc;
+function presenceAt(s, dbmFn, unlock, lock) {
+  // PresenceMonitor.swift:286-305 — dual threshold with 5 dBm hysteresis
+  let st = 'present';
+  for (let x = 6.0; x <= s; x += 1 / 120) {
+    const e = dbmFn(x);
+    if (e >= unlock) st = 'present';
+    else if (e <= lock) st = 'away';
+    else if (st === 'present' && e >= unlock - 5) st = 'present';
+    else if (st === 'away' && e <= lock + 5) st = 'away';
+    else st = 'between';
+  }
+  return st;
+}
+function arcSweep(cx, cy, r, p, a0) {
+  if (p <= 0.001) return;
+  g.beginPath(); g.arc(cx, cy, r, a0 - Math.PI * p, a0 + Math.PI * p); g.stroke();
+}
+function drawField(f) {
+  const { cx, cy, sc } = f;
+  const rU = radius(f.unlock, sc), rL = radius(f.lock, sc), rO = radius(-95, sc) + 10 * sc;
+  g.save();
+  g.lineCap = 'round';
+  g.strokeStyle = rgba(COL.ink, 0.13); g.lineWidth = 2;
+  arcSweep(cx, cy, rO, f.outerP, Math.PI);
+  if (f.bandA > 0) {
+    g.beginPath(); g.arc(cx, cy, radius(f.bandUnlock ?? f.unlock, sc), 0, Math.PI * 2); g.arc(cx, cy, rL, 0, Math.PI * 2);
+    g.fillStyle = rgba(COL.signal, 0.06 * f.bandA); g.fill('evenodd');
+  }
+  g.strokeStyle = COL.signal; g.lineWidth = 3.2;
+  arcSweep(cx, cy, rU, f.unlockP, Math.PI);
+  g.strokeStyle = rgba(COL.signal, 0.45);
+  arcSweep(cx, cy, rL, f.lockP, Math.PI);
+  g.restore();
+  const label = (str, r, deg, a, color) => {
+    if (a <= 0) return;
+    const x = cx + r * Math.cos(deg * Math.PI / 180), y = cy + r * Math.sin(deg * Math.PI / 180);
+    const w = measure(str, { size: 24 * f.ts, weight: 500 });
+    g.save(); g.globalAlpha *= a;
+    rrect(x - w / 2 - 10, y - 18 * f.ts, w + 20, 36 * f.ts, 8); g.fillStyle = f.paper || COL.paper; g.fill();
+    g.restore();
+    text(str, x, y + 8 * f.ts, { size: 24 * f.ts, weight: 500, align: 'center', color, alpha: a });
+  };
+  label(`解锁 ${Math.round(f.unlock)}`, rU, 203, f.unlockLabelA, COL.signal);
+  label(`锁屏 ${Math.round(f.lock)}`, rL, Math.abs(rL - rU) < 26 * sc ? 338 : 322, f.lockLabelA, rgba(COL.signal, 0.8));
+  // host glyph (a laptop line drawing, like SF Symbol "macbook")
+  if (f.hostA > 0) {
+    g.save(); g.globalAlpha *= f.hostA; g.translate(cx, cy); g.scale(sc / 2.6 * 1.5, sc / 2.6 * 1.5);
+    g.strokeStyle = COL.ink2; g.lineWidth = 2.4; g.lineJoin = 'round';
+    rrect(-30, -24, 60, 40, 4); g.stroke();
+    g.beginPath(); g.moveTo(-40, 20); g.lineTo(40, 20); g.lineTo(36, 25); g.lineTo(-36, 25); g.closePath(); g.stroke();
+    g.restore();
+  }
+  // device dot: fixed bearing (22°), only the radius moves
+  if (f.dotA > 0) {
+    const rd = radius(f.rssi, sc), a = 22 * Math.PI / 180;
+    const x = cx + rd * Math.cos(a), y = cy + rd * Math.sin(a);
+    const away = f.state === 'away';
+    g.save(); g.globalAlpha *= f.dotA;
+    if (!away) { circle(x, y, 8.5 * sc); g.fillStyle = rgba(COL.signal, 0.13); g.fill(); circle(x, y, 3.4 * sc); g.fillStyle = COL.signal; g.fill(); }
+    else { circle(x, y, 3.4 * sc); g.strokeStyle = COL.ink; g.lineWidth = 2.6; g.stroke(); }
+    g.restore();
+    text(f.name || '主设备', x + 14 * sc, y + 4 * sc, { size: 26 * f.ts, weight: 500, color: away ? COL.ink : COL.ink2, alpha: f.dotA });
+    text(`${Math.round(f.shown ?? f.rssi)} dBm`, x + 14 * sc, y + 4 * sc + 30 * f.ts, { size: 22 * f.ts, mono: true, color: COL.ink3, alpha: f.dotA });
+  }
+}
+
+// ---------- settings panel (after Sources/UI/SettingsView.swift:183-206, AppModel.swift:252-262) ----------
+function drawPanel(p) {
+  const { x, y, w } = p, h = 430;
+  g.save(); g.globalAlpha *= p.alpha ?? 1;
+  rrect(x, y, w, h, 18); g.fillStyle = COL.sheet; g.fill();
+  g.strokeStyle = rgba(COL.ink, 0.10); g.lineWidth = 1.5; g.stroke();
+  text('强度阈值', x + 40, y + 56, { size: 19, weight: 600, color: COL.ink3, track: 0.6 });
+  const tx0 = x + 40, tw = w - 80;
+  const px = dbm => tx0 + (dbm + 95) / 55 * tw;
+  const row = (yy, title, hint, val, pressed) => {
+    text(title, tx0, yy, { size: 27, weight: 500 });
+    text(hint, tx0, yy + 30, { size: 20, weight: 400, color: COL.ink3 });
+    text(`${Math.round(val)} dBm`, x + w - 40, yy, { size: 24, mono: true, align: 'right', color: COL.signal });
+    const ty = yy + 70;
+    rrect(tx0, ty - 2, tw, 4, 2); g.fillStyle = rgba(COL.ink, 0.12); g.fill();
+    rrect(tx0, ty - 2, px(val) - tx0, 4, 2); g.fillStyle = COL.signal; g.fill();
+    circle(px(val), ty, pressed ? 15 : 14); g.fillStyle = pressed ? '#E9EBEC' : COL.sheet2; g.fill();
+    g.strokeStyle = rgba(COL.ink, 0.35); g.lineWidth = 1.6; g.stroke();
+    return { kx: px(val), ky: ty };
+  };
+  const k = row(y + 120, '解锁强度', '信号强于此值才解锁', p.unlock, p.pressed);
+  row(y + 250, '锁屏强度', '弱于此值即算离开', p.lock, false);
+  g.fillStyle = rgba(COL.ink, 0.06); g.fillRect(x + 40, y + 352, w - 80, 1.5);
+  if (p.predict) {
+    circle(x + 48, y + 392, 6); g.fillStyle = COL.signal; g.fill();
+    text(p.predict, x + 66, y + 400, { size: 21, weight: 500, color: COL.ink2 });
+  }
+  g.restore();
+  return k;
+}
+
+// ---------- scenes ----------
+function sceneOpen(s) {
+  bg(COL.paper);
+  const slam = (str, x, y, t0, t1, align = 'center', size = 210) => {
+    if (s < t0 || s >= t1) return;
+    const k = 1 + 0.07 * (1 - step(s - t0, 34));
+    g.save(); g.translate(x, y); g.scale(k, k);
+    text(str, 0, -14 * (1 - step(s - t0, 34)), { size, weight: 600, align, track: -0.02 * size });
+    g.restore();
+  };
+  // Bar 1
+  slam('你起身', 900, 560, 0.0, 1.0, 'right');
+  slam('离开', 960, 560, 0.5, 1.0, 'left');
+  slam('它锁屏', 960, 560, 1.0, 2.0);
+  // Bar 2
+  slam('你回来', 900, 560, 2.0, 3.0, 'right');
+  slam('坐下', 960, 560, 2.5, 3.0, 'left');
+  slam('它解锁', 960, 560, 3.0, 3.5);
+  // the lock line: sweeps in at beat 3, sweeps back out at beat 7. Lead edge on a faster spring than the tail.
+  const L0 = 520, L1 = 1400, ly = 618;
+  let a = 0, b = 0;
+  if (s >= 1.0 && s < 3.0) { b = step(s - 1.0, 22); a = step(s - 1.06, 12) * 0; }
+  if (s >= 3.0 && s < 3.5) { b = 1; a = step(s - 3.0, 22); }
+  if (s >= 1.0 && s < 3.5) {
+    const xa = lerp(L0, L1, s >= 3.0 ? 0 : a), xb = lerp(L0, L1, b);
+    const xl = s >= 3.0 ? lerp(L1, L0, step(s - 3.0, 22)) : xb;  // retract right → left
+    const xt = s >= 3.0 ? lerp(L1, L0, step(s - 3.0, 12)) : xa;
+    g.fillStyle = COL.ink; g.fillRect(Math.min(xl, xt), ly, Math.abs(xt - xl), 8);
+  }
+}
+
+const dbmB = s => track([[0, -52], [6.32, -63], [6.82, -88], [7.32, -55]], s, 20);
+const unlockB = s => track([[0, -60], [8.04, -70]], s, 12);
+const unlockBand = s => track([[0, -60], [8.04, -70]], s, 20);
+function shownDbm(s, fn) {         // readout refreshes at irregular moments, not every frame
+  let k = Math.floor(s / 0.07), ts = k * 0.07 + hash(k) * 0.04;
+  if (ts > s) ts = (k - 1) * 0.07 + hash(k - 1) * 0.04;
+  return fn(ts);
+}
+
+function sceneField(s) {
+  bg(COL.paper);
+  const push = 1 + 0.04 * step(s - 5.5, 6);
+  const mv = step(s - 7.75, 13);
+  const cx = lerp(1150, 610, mv), cy = 540;
+  const sc = 2.6 * push * lerp(1, 0.8, mv);
+  const st = s >= 6.0 ? presenceAt(s, dbmB, -60, -85) : 'present';
+  drawField({
+    cx, cy, sc, ts: lerp(1, 0.9, mv),
+    outerP: step(s - 4.5, 9), unlockP: step(s - 5.0, 10), lockP: step(s - 5.5, 10),
+    bandA: step(s - 5.6, 10), bandUnlock: unlockBand(s),
+    unlock: unlockB(s), lock: -85,
+    unlockLabelA: clamp((s - 5.08) / 0.12), lockLabelA: clamp((s - 5.58) / 0.12),
+    hostA: clamp((s - 6.0) / 0.1), dotA: clamp((s - 6.0) / 0.06),
+    rssi: dbmB(s), shown: shownDbm(s, dbmB), state: st,
+  });
+  // status, top right (fades when the panel takes over)
+  const stA = clamp((s - 6.0) / 0.08) * (1 - clamp((s - 7.75) / 0.15));
+  if (stA > 0) {
+    const label = st === 'present' ? '在场' : st === 'away' ? '离开' : '过渡';
+    g.save(); g.globalAlpha *= stA;
+    if (st === 'present') { circle(1586, 150, 10); g.fillStyle = COL.signal; g.fill(); }
+    else { circle(1586, 150, 9); g.strokeStyle = COL.ink; g.lineWidth = 2.6; g.stroke(); }
+    g.restore();
+    text(label, 1612, 166, { size: 46, weight: 600, alpha: stA });
+  }
+  // captions
+  const cap = (str, t0, t1) => { if (s >= t0 && s < t1) text(typed(str, s, t0, 30), 120, 1000, { size: 40, weight: 500, color: COL.ink, alpha: 1 - clamp((s - t1 + 0.12) / 0.12) }); };
+  cap('看蓝牙信号，判断你在不在', 6.0, 6.5);
+  cap('两环之间不触发任何动作', 6.5, 7.6);
+  // settings panel
+  if (s >= 7.75) {
+    const px = 1130 + 820 * (1 - step(s - 7.75, 16));
+    const pressed = s >= 8.0 && s < 9.5;
+    const predict = s >= 9.0 ? typed('此刻若锁屏 · 会自动解锁（当前 -55 ≥ -70 dBm）', s, 9.0, 70) : '';
+    const k = drawPanel({ x: px, y: 330, w: 660, unlock: unlockB(s), lock: -85, pressed, predict });
+    // cursor: arrives on the knob at beat 17, drags with it, releases on beat 20
+    const cx0 = track([[0, 1900], [7.55, k.kx]], s, 14), cy0 = track([[0, 1120], [7.55, k.ky]], s, 14);
+    const cxp = s >= 8.0 ? k.kx : cx0, cyp = s >= 8.0 ? k.ky : cy0;
+    const off = s >= 9.5 ? step(s - 9.55, 10) : 0;
+    drawCursor(cxp + 6 + 120 * off, cyp + 4 + 90 * off, pressed);
+  }
+}
+
+function sceneAuth(s) {
+  bg(COL.paper);
+  // system auth dialog (SecurityAgent) — AuthDialogHandler.swift:4-5, :105
+  const dIn = step(s - 10.5, 22), dOut = step(s - 11.9, 22);
+  if (s >= 10.5) {
+    const a = clamp((s - 10.5) / 0.08) * (1 - dOut);
+    const k = lerp(0.96, 1, dIn) * lerp(1, 0.97, dOut);
+    const x = 860, y = 540, w = 470, h = 540;
+    g.save(); g.globalAlpha *= a; g.translate(x, y); g.scale(k, k);
+    g.shadowColor = rgba(COL.ink, 0.14); g.shadowBlur = 50; g.shadowOffsetY = 18;
+    rrect(-w / 2, -h / 2, w, h, 24); g.fillStyle = COL.sheet2; g.fill();
+    g.shadowColor = 'transparent';
+    g.strokeStyle = rgba(COL.ink, 0.1); g.lineWidth = 1.5; g.stroke();
+    // padlock
+    g.fillStyle = COL.ink2; rrect(-30, -200, 60, 46, 9); g.fill();
+    g.strokeStyle = COL.ink2; g.lineWidth = 7; g.beginPath(); g.arc(0, -200, 18, Math.PI, 0); g.stroke();
+    text('“系统设置”想要进行更改', 0, -80, { size: 28, weight: 600, align: 'center' });
+    text('输入密码以允许此次操作', 0, -18, { size: 20, weight: 400, align: 'center', color: COL.ink3 });
+    rrect(-195, 20, 390, 56, 10); g.fillStyle = '#fff'; g.fill(); g.strokeStyle = rgba(COL.ink, 0.16); g.lineWidth = 1.5; g.stroke();
+    const dots = s < 11.56 ? 0 : clamp(Math.floor((s - 11.56) / 0.03) + 1, 0, 8);
+    if (dots === 0) text('密码', -175, 56, { size: 21, weight: 400, color: COL.ink3 });
+    for (let i = 0; i < dots; i++) { circle(-170 + i * 22, 48, 6); g.fillStyle = COL.ink; g.fill(); }
+    rrect(-195, 130, 180, 52, 10); g.fillStyle = '#E9EBEC'; g.fill();
+    text('取消', -105, 164, { size: 21, weight: 500, align: 'center' });
+    const okP = s >= 11.85 && s < 11.95;
+    rrect(15, 130, 180, 52, 10); g.fillStyle = okP ? COL.ink : COL.graphite; g.fill();
+    text('修改设置', 105, 164, { size: 21, weight: 500, align: 'center', color: COL.sheet });
+    g.restore();
+  }
+  // NearbyPass confirm panel — ConfirmPanel.swift:158-215
+  if (s >= 11.0) {
+    const pIn = step(s - 11.0, 18);
+    const a = clamp((s - 11.0) / 0.08) * (1 - dOut);
+    const x = 1160 + 260 * (1 - pIn), y = 400, w = 620, h = 270;
+    g.save(); g.globalAlpha *= a;
+    g.shadowColor = rgba(COL.ink, 0.12); g.shadowBlur = 40; g.shadowOffsetY = 14;
+    rrect(x, y, w, h, 20); g.fillStyle = COL.sheet; g.fill(); g.shadowColor = 'transparent';
+    g.strokeStyle = rgba(COL.ink, 0.1); g.lineWidth = 1.5; g.stroke();
+    // icon: two rings
+    rrect(x + 30, y + 30, 64, 64, 15); g.fillStyle = COL.paper; g.fill();
+    g.strokeStyle = COL.signal; g.lineWidth = 2.6; circle(x + 62, y + 62, 13); g.stroke();
+    g.strokeStyle = rgba(COL.signal, 0.45); circle(x + 62, y + 62, 23); g.stroke();
+    text('设备在附近，要填密码吗？', x + 114, y + 58, { size: 26, weight: 600 });
+    text('为这次系统授权自动填入登录密码', x + 114, y + 90, { size: 18, weight: 400, color: COL.ink3 });
+    text('主设备', x + 30, y + 150, { size: 21, weight: 500 });
+    // 5-slot bars, lit by dBm (-95…-40)
+    const lit = Math.round(clamp((-55 + 95) / 55) * 5);
+    for (let i = 0; i < 5; i++) { const bh = 18 * (0.4 + 0.15 * i); g.fillStyle = i < lit ? COL.signal : rgba(COL.ink, 0.15); g.fillRect(x + w - 176 + i * 7, y + 150 - bh, 4.5, bh); }
+    text('-55 dBm', x + w - 30, y + 150, { size: 19, mono: true, align: 'right', color: COL.ink3 });
+    g.fillStyle = rgba(COL.ink, 0.08); g.fillRect(x + 30, y + 176, w - 60, 1.5);
+    rrect(x + w - 30 - 130 - 12 - 104, y + 200, 104, 46, 10); g.fillStyle = '#E9EBEC'; g.fill();
+    text('取消', x + w - 30 - 130 - 12 - 52, y + 230, { size: 20, weight: 500, align: 'center' });
+    const allowP = s >= 11.5 && s < 11.62;
+    rrect(x + w - 30 - 130, y + 200, 130, 46, 10); g.fillStyle = allowP ? COL.ink : COL.graphite; g.fill();
+    text('允许', x + w - 30 - 65, y + 230, { size: 20, weight: 600, align: 'center', color: COL.sheet });
+    g.restore();
+    // cursor to Allow, clicks on beat 24
+    const bx = x + w - 95, by = y + 223;
+    const cx = track([[0, 1700], [11.05, bx]], s, 13), cy = track([[0, 1000], [11.05, by]], s, 13);
+    if (s < 11.95) drawCursor(s >= 11.5 ? bx : cx, s >= 11.5 ? by : cy, allowP);
+  }
+}
+
+function sceneCode(s) {
+  bg(COL.paper);
+  // A manual lock is only lifted after the device leaves and comes back (LockReasonTracker.swift:56-66, README.md:81)
+  const tIn = clamp((s - 14.0) / 0.1);
+  text('你亲手锁的屏，它不会马上解开', 200, 230 - 20 * (1 - step(s - 14.0, 24)), { size: 52, weight: 600, alpha: tIn });
+  const nodes = [[14.0, 330], [14.5, 730], [15.0, 1130], [15.5, 1530]];
+  const lead = track([[0, 200], ...nodes.map(([t, x]) => [t, x + (t === 15.5 ? 200 : 0)])], s, 20);
+  g.fillStyle = rgba(COL.ink, 0.85 * tIn); g.fillRect(200, 559, Math.max(0, lead - 200), 3);
+  const lab = [
+    ['⌃⌘Q 亲手锁屏', '手机就在桌上'],
+    ['人还在', '不自动解锁'],
+    ['设备先离开', '记下：人走过'],
+    ['再回来', '这才自动解锁'],
+  ];
+  nodes.forEach(([t0, x], i) => {
+    if (s < t0) return;
+    const a = clamp((s - t0) / 0.06), k = step(s - t0, 30);
+    circle(x, 560, 11 * k); g.fillStyle = COL.ink; g.fill();
+    text(lab[i][0], x, 505 - 10 * (1 - k), { size: 34, weight: 600, align: 'center', alpha: a });
+    text(lab[i][1], x, 630 + 10 * (1 - k), { size: 28, weight: 500, align: 'center', color: i === 3 ? COL.signal : COL.ink2, alpha: a });
+  });
+  // padlock: closed until the last node
+  const lockX = 960, lockY = 810, openP = step(s - 15.5, 18);
+  g.save(); g.globalAlpha *= tIn;
+  g.fillStyle = COL.ink; rrect(lockX - 34, lockY - 10, 68, 54, 10); g.fill();
+  g.strokeStyle = COL.ink; g.lineWidth = 8; g.lineCap = 'round';
+  g.beginPath(); g.arc(lockX, lockY - 10 - 22 * openP, 22, Math.PI, 0); g.lineTo(lockX + 22, lockY - 6 - 22 * openP); g.stroke();
+  g.restore();
+  // the phone, riding a lane above the line
+  const px = track([[0, 330], [14.5, 730], [15.0, 1130], [15.5, 1530]], s, 16);
+  const py = 400 - track([[0, 0], [15.0, 70], [15.5, 0]], s, 18);
+  const away = s >= 15.0 && s < 15.5;
+  g.save(); g.globalAlpha *= tIn * (away ? 0.45 : 1);
+  if (!away) { circle(px, py, 22); g.fillStyle = rgba(COL.signal, 0.13); g.fill(); circle(px, py, 9); g.fillStyle = COL.signal; g.fill(); }
+  else { circle(px, py, 9); g.strokeStyle = COL.ink; g.lineWidth = 2.6; g.stroke(); }
+  g.restore();
+}
+
+function drawMenubar(dbm, dark) {
+  g.fillStyle = dark ? 'rgba(255,255,255,.06)' : rgba(COL.sheet, 0.92); g.fillRect(0, 0, W, 46);
+  g.fillStyle = rgba(COL.ink, 0.08); g.fillRect(0, 46, W, 1);
+  circle(1768, 23, 7); g.fillStyle = COL.signal; g.fill();
+  text(String(dbm), 1784, 31, { size: 22, mono: true, weight: 500 });
+}
+
+function sceneSpread(s) {
+  if (s < 16.5) {
+    bg(COL.paper);
+    const z = lerp(1.35, 1, step(s - 16.0, 12));
+    g.save(); g.translate(960, 540); g.scale(z, z); g.translate(-960, -540);
+    drawMenubar(-58);
+    // settings window
+    const x = 340, y = 150, w = 1240, h = 780;
+    rrect(x, y, w, h, 22); g.fillStyle = COL.sheet; g.fill(); g.strokeStyle = rgba(COL.ink, 0.1); g.lineWidth = 1.5; g.stroke();
+    for (let i = 0; i < 3; i++) { circle(x + 34 + i * 26, y + 32, 8); g.fillStyle = rgba(COL.ink, 0.14); g.fill(); }
+    text('NearbyPass', x + w / 2, y + 40, { size: 20, weight: 500, align: 'center', color: COL.ink2 });
+    g.fillStyle = rgba(COL.ink, 0.07); g.fillRect(x, y + 64, w, 1.5);
+    drawField({ cx: x + 330, cy: y + 420, sc: 1.55, ts: 0.8, paper: COL.sheet, outerP: 1, unlockP: 1, lockP: 1, bandA: 1, unlock: -70, lock: -85,
+      unlockLabelA: 1, lockLabelA: 1, hostA: 1, dotA: 1, rssi: -58, shown: -58, state: 'present' });
+    drawPanel({ x: x + 640, y: y + 150, w: 560, unlock: -70, lock: -85, predict: '此刻若锁屏 · 会自动解锁' });
+    g.restore();
+    return;
+  }
+  bg(COL.paper);
+  if (s < 17.0) {
+    const w1 = measure('日志里的密码 → ', { size: 96, weight: 600, track: -2 });
+    const wAll = w1 + measure('***', { size: 96, mono: true });
+    const x = 960 - wAll / 2;
+    text('日志里的密码 → ', x, 590, { size: 96, weight: 600, color: COL.ink2, track: -2 });
+    if (s >= 16.75) text('***', x + w1, 590 - 10 * (1 - step(s - 16.75, 30)), { size: 96, mono: true, color: COL.signal, weight: 500 });
+  } else if (s < 17.5) {
+    text('每次锁屏只试一次', 960, 560, { size: 120, weight: 600, align: 'center', track: -2 });
+    if (s >= 17.25) text('密码错一次就停手', 960, 670, { size: 40, weight: 500, align: 'center', color: COL.ink2, alpha: clamp((s - 17.25) / 0.05) });
+  } else {
+    text('不用 root，不装认证插件', 960, 590, { size: 120, weight: 600, align: 'center', track: -2 });
+    const d = clamp((s - 17.75) / 0.25);
+    if (d > 0) { g.fillStyle = rgba(COL.ink, d * d); g.fillRect(0, 0, W, H); }
+  }
+}
+
+const dropDbm = [[18.0, -84], [18.5, -78], [18.62, -74], [18.75, -71], [18.87, -66], [19.0, -60], [19.13, -58], [19.25, -56], [19.38, -53], [19.5, -51]];
+function sceneDrop(s) {
+  bg(COL.ink);
+  let v = dropDbm[0][1]; for (const [t, x] of dropDbm) if (s >= t) v = x;
+  const lastT = dropDbm.filter(([t]) => s >= t).pop()[0];
+  const up = step(s - 20.0, 14);
+  const k = (1 + 0.06 * (1 - step(s - lastT, 40))) * lerp(1, 0.32, up);
+  const rx = lerp(1180, 1180, up), ry = lerp(560, 250, up);
+  const light = '#B9BFC3';
+  g.save(); g.translate(rx, ry); g.scale(k, k);
+  text('主设备', 0, -210, { size: 30, weight: 500, align: 'center', color: light });
+  text(String(v), 0, 0, { size: 250, mono: true, weight: 500, align: 'center', color: COL.signalDark });
+  g.restore();
+  // hold bar (AutoUnlockHandler.swift:18-22, 103-129)
+  if (s >= 18.5 && s < 20.0) {
+    const msg = s < 19.0 ? '未到解锁强度 -60' : s < 19.5 ? '持续 5 秒' : '强信号，1 秒';
+    text(msg, 1180, 700, { size: 32, weight: 500, align: 'center', color: s < 19 ? COL.ink3 : COL.paper });
+  }
+  {
+    const bx = 970, bw = 420, by = 740;
+    const leadP = track([[0, 0], [19.0, 0.1], [19.5, 1]], s, 18);
+    const tailP = track([[0, 0], [19.88, 1]], s, 16);
+    if (s >= 19.0 && s < 20.2) {
+      g.fillStyle = 'rgba(231,234,235,.12)'; g.fillRect(bx, by, bw, 6);
+      g.fillStyle = COL.signalDark; g.fillRect(bx + bw * tailP, by, Math.max(0, bw * (leadP - tailP)), 6);
+    }
+  }
+  // No lock-screen UI here: NearbyPass has none of its own. It writes into macOS's field in the background,
+  // so the shot shows only the outcome — the padlock opens by itself.
+  if (s >= 20.0) {
+    const a = clamp((s - 20.0) / 0.06), k = lerp(0.9, 1, step(s - 20.0, 26));
+    const openP = step(s - 20.5, 18), bump = kick(s, 20.5, 0.06);
+    g.save(); g.globalAlpha *= a; g.translate(1180, 700); g.scale(k * (1 + bump), k * (1 - bump));
+    g.fillStyle = COL.paper; rrect(-62, -20, 124, 98, 16); g.fill();
+    g.strokeStyle = COL.paper; g.lineWidth = 14; g.lineCap = 'round';
+    g.beginPath(); g.arc(0, -20 - 40 * openP, 40, Math.PI, 0); g.lineTo(40, -14 - 40 * openP); g.stroke();
+    circle(0, 22, 10); g.fillStyle = COL.ink; g.fill();
+    g.restore();
+    if (s >= 20.5) text('自动解锁', 1180, 880, { size: 40, weight: 600, align: 'center', color: COL.signalDark, alpha: clamp((s - 20.5) / 0.05) });
+  }
+}
+
+function sceneBack(s) {
+  bg(COL.paper);
+  drawMenubar(-51);
+  text('在场', 960, 900, { size: 46, weight: 600, align: 'center', alpha: clamp((s - 21.0) / 0.06) });
+  circle(960 - measure('在场', { size: 46, weight: 600 }) / 2 - 26, 884, 10); g.fillStyle = COL.signal; g.fill();
+}
+
+function sceneEnd(s) {
+  bg(COL.paper);
+  const nameS = { size: 168, weight: 600, track: -7 };
+  const nw = measure('NearbyPass', nameS);
+  const x = 960 - nw / 2 + 30;
+  // name pushes up from below its baseline (clipped)
+  g.save(); g.beginPath(); g.rect(0, 330, W, 270); g.clip();
+  text('NearbyPass', x, 560 + 200 * (1 - step(s - 22.0, 13)), nameS);
+  g.restore();
+  if (s >= 22.5) { circle(x - 52, 500, 20 * step(s - 22.5, 22)); g.fillStyle = COL.signal; g.fill(); }
+  g.save(); g.beginPath(); g.rect(0, 600, W, 90); g.clip();
+  if (s >= 23.0) text('用蓝牙判断你在不在，替你锁屏和解锁', 960, 660 + 80 * (1 - step(s - 23.0, 13)), { size: 46, weight: 400, align: 'center', color: COL.ink2 });
+  g.restore();
+}
+
+// ---------- compose ----------
+function drawAll(s) {
+  if (s >= 23.75) { bg('#000'); return; }
+  if (s < 4.0) sceneOpen(s);
+  else if (s < 12.0) {
+    const dx = -1920 * step(s - 10.0, 26);
+    if (s < 10.0 || dx > -1919) { g.save(); g.translate(dx, 0); sceneField(s); g.restore(); }
+    if (s >= 10.0) { g.save(); g.translate(dx + 1920, 0); sceneAuth(s); g.restore(); }
+  }
+  else if (s < 16.0) sceneCode(s);
+  else if (s < 18.0) sceneSpread(s);
+  else if (s < 21.0) sceneDrop(s);
+  else if (s < 22.0) sceneBack(s);
+  else sceneEnd(s);
+  drawMascot(mascotAt(s));
+}
+
+function render(t) {
+  const s = warp(sceneTime(t));
+  // whip pan: a real shutter smear on top of the 3-subframe blend
+  if (s >= 10.0 && s < 10.32) {
+    const K = 12, shutter = 1 / 60;
+    for (let i = 0; i < K; i++) {
+      g = accB; g.setTransform(1, 0, 0, 1, 0, 0); drawAll(s - shutter * i / K);
+      accA.globalAlpha = 1 / (i + 1); accA.drawImage(accB.canvas, 0, 0);
+    }
+    accA.globalAlpha = 1;
+    g = main; main.drawImage(accA.canvas, 0, 0);
+    return;
+  }
+  g = main; g.setTransform(1, 0, 0, 1, 0, 0); g.globalAlpha = 1;
+  drawAll(s);
+}
+
+window.END = END;
+window.seek = t => render(clamp(t, 0, END));
+window.ready = Promise.all([
+  '400 20px Inter', '500 20px Inter', '600 20px Inter', '400 20px JBM', '500 20px JBM',
+].map(f => document.fonts.load(f))).then(() => document.fonts.ready).then(() => { render(0); return true; });
+</script>
+</body>
+</html>

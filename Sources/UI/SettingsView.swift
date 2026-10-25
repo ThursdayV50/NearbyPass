@@ -138,10 +138,12 @@ struct SettingsView: View {
                                 .foregroundStyle(Theme.ink)
                         }
                         Slider(value: Binding(get: { m.delay }, set: { m.setDelay($0) }),
-                               in: 15 ... 300, step: 5)
+                               in: 0 ... 300, step: 5)
                             .controlSize(.mini)
                             .tint(Theme.signal)
-                        Text("防的是你起身倒水、走到打印机旁边这种短暂离开。")
+                        Text(m.delay < 1
+                             ? "0 秒：一越过锁屏环就锁，不等待。信号在阈值附近抖动时可能锁了又解。"
+                             : "防的是你起身倒水、走到打印机旁边这种短暂离开。")
                             .font(Theme.text(10))
                             .foregroundStyle(Theme.ink3)
                     }

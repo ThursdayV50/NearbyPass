@@ -39,7 +39,15 @@ final class AutoLockHandler {
 
         if absentSince == nil {
             absentSince = Date()
-            Log.info("检测到人已离开，\(Int(s.autoLockDelay)) 秒后锁屏")
+            let delay = Int(s.autoLockDelay)
+            if delay <= 0 {
+                // 延迟为 0：越过锁屏环就锁，不再等下一个 tick
+                Log.info("检测到人已离开，延迟为 0，立即锁屏")
+                clear()
+                fire()
+                return
+            }
+            Log.info("检测到人已离开，\(delay) 秒后锁屏")
             return
         }
 

@@ -17,3 +17,7 @@ docs/*.png
 NearbyPass-*.zip
 NearbyPass-*.dmg
 docs/redesign/*.png
+
+# 宣传片的渲染中间物（帧序列 + 音轨分轨，几百 MB）
+promo/node_modules/
+promo/out/
