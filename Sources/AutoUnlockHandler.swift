@@ -15,8 +15,11 @@ final class AutoUnlockHandler {
 
     static let shared = AutoUnlockHandler()
 
-    /// 达到解锁强度后需要持续的秒数（擦边过线）
-    private let requireStrongFor: TimeInterval = 5
+    /// 达到解锁强度后需要持续的秒数（擦边过线）。
+    /// 曾经是 5 秒：那道门槛和 presence 的 5dBm 迟滞带重复保险，
+    /// 加上手机空闲时 1～5 秒才发一包广播，实际感觉是"人都坐下了屏幕还锁着"。
+    /// 2 秒足够滤掉"从旁边走过"，也不至于让人等。
+    private let requireStrongFor: TimeInterval = 2
     /// 强信号只需持续这么久就放行（人贴着设备回来）
     private let fastStrongFor: TimeInterval = 1.0
     /// 比解锁阈值高多少算"强信号"
@@ -80,8 +83,20 @@ final class AutoUnlockHandler {
 
         // F2 只认「解锁主设备」
         guard let primary = s.primaryDeviceID else { reset(); return }
-        guard let rssi = PresenceMonitor.shared.liveRSSI(primary),
-              rssi >= s.unlockThreshold else {
+        // 主设备这一秒没有新广播，不等于"人走了"：手机空闲时 1～5 秒才发一包，
+        // 中间这段拿到的是空值。这里如果清零，等于把已经等的秒数抹掉——
+        // 「强信号 1 秒」会被反复重置，实际要等五六秒才触发。
+        guard let rssi = PresenceMonitor.shared.liveRSSI(primary) else {
+            // 只容忍广播间隙。真的很久没有消息（人走了）就作废，免得带着
+            // 一小时前的计时回来，一露头就解锁。
+            if let d = PresenceMonitor.shared.device(primary),
+               Date().timeIntervalSince(d.lastSeen) > 8 {
+                reset()
+            }
+            return
+        }
+
+        guard rssi >= s.unlockThreshold else {
             reset()
             return
         }
