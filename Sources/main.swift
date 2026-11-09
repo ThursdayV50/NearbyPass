@@ -43,6 +43,14 @@ if CommandLine.arguments.contains("--install-to-applications") {
 
 // main.swift — 入口
 
+// 诊断报告：输出到标准输出，方便终端里直接提 issue（GUI 里对应「导出诊断日志」）
+if CommandLine.arguments.contains("--dump-diagnostics") {
+    _ = PresenceMonitor.shared              // 建起蓝牙监听，状态才会上报
+    RunLoop.main.run(until: Date().addingTimeInterval(1.5))
+    print(Diagnostics.buildReport())
+    exit(0)
+}
+
 // 登录项：查看 / 设置（排查"重启后没反应"时用）
 if CommandLine.arguments.contains("--login-item-status") {
     print("登录项状态: \(LoginItem.statusText)  enabled=\(LoginItem.isEnabled)  requiresApproval=\(LoginItem.needsApproval)")

@@ -95,6 +95,15 @@ final class Log {
         queue.sync { Array(buffer.suffix(n)) }
     }
 
+    /// 落盘日志的最后 n 行（已打码）。
+    /// 一次性 CLI 运行时内存环形缓冲是空的，但文件里有常驻实例的记录。
+    func fileTailLines(_ n: Int = 500) -> [String] {
+        guard let data = FileManager.default.contents(atPath: fileURL.path),
+              let text = String(data: data, encoding: .utf8) else { return [] }
+        let lines = text.split(separator: "\n", omittingEmptySubsequences: true)
+        return lines.suffix(n).map(String.init)
+    }
+
     var logFilePath: String { fileURL.path }
 
     func clearFile() {

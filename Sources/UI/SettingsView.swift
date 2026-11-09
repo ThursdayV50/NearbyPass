@@ -369,6 +369,19 @@ struct SettingsView: View {
                 Text("隐藏后功能照常运行，重新打开 App 即可回到这里。")
                     .font(Theme.text(10))
                     .foregroundStyle(Theme.ink3)
+
+                HStack(spacing: 8) {
+                    footButton("导出诊断日志", "square.and.arrow.down") {
+                        Diagnostics.export()
+                    }
+                    footButton("提 Issue", "text.bubble") {
+                        Diagnostics.openNewIssue()
+                    }
+                    Spacer()
+                }
+                Text("导出会把系统信息、设备列表和最近日志写成一个 txt（密码等敏感串已打码）；提 Issue 时把文件拖进输入框即可。")
+                    .font(Theme.text(10))
+                    .foregroundStyle(Theme.ink3)
             }
         }
     }

@@ -183,6 +183,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(makeItem("权限自检…", #selector(showDiagnostics)))
         menu.addItem(makeItem("检查更新…", #selector(checkUpdate)))
         menu.addItem(makeItem("查看日志", #selector(openLog)))
+        menu.addItem(makeItem("导出诊断日志…", #selector(exportDiagnostics)))
 
         installItem = makeItem("安装到「应用程序」", #selector(installToApplications))
         menu.addItem(installItem)
@@ -291,6 +292,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func openLog() {
         NSWorkspace.shared.open(URL(fileURLWithPath: Log.shared.logFilePath))
+    }
+
+    @objc private func exportDiagnostics() {
+        Diagnostics.export()
     }
 
     @objc private func checkUpdate() {
