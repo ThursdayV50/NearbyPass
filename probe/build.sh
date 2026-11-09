@@ -22,7 +22,7 @@ build_one() {
   [ -f "$src" ] || return 0
   swiftc -O -whole-module-optimization \
     -target arm64-apple-macos14.0 \
-    -framework CoreBluetooth -framework LocalAuthentication -framework AppKit -framework ApplicationServices \
+    -framework CoreBluetooth -framework IOBluetooth -framework LocalAuthentication -framework AppKit -framework ApplicationServices \
     -framework Security -framework Foundation -framework CoreGraphics \
     -framework IOKit \
     -o "$BIN/$name" "$src" 2>"$BIN/$name.err"

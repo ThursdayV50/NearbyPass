@@ -3,9 +3,12 @@
 // 常驻扫描 BLE 广播，维护每个设备的实时 RSSI（EMA 平滑 + 60 秒历史），
 // 并根据双阈值（解锁强度 / 锁屏强度）输出在场状态。
 //
-// 设备名解析优先级：用户别名 > GATT Device Name(0x2A00) > 广播名（若不像随机串）> "未知设备"
+// 设备名解析优先级：用户别名 > 广播名（若不像随机串）> 系统蓝牙列表同源的缓存名
+// > 记住的名 > GATT Device Name(0x2A00) > "未知设备"。
+// 系统蓝牙列表显示的名字来自 bluetoothd 的名字缓存，CoreBluetooth 的
+// peripheral.name 就是这份缓存（实测与系统设置、system_profiler 完全一致）。
 // 很多 Android 设备（例如小米）广播的是随机串（NGMeCvX2Lpr6xumgxKmaOTmRY），
-// 必须在连上之后读 GATT 0x2A00 才能拿到真实机名。
+// 这种广播名不能盖掉系统缓存名，否则列表里就只剩"未知设备"。
 import Foundation
 import CoreBluetooth
 
@@ -13,6 +16,7 @@ import CoreBluetooth
 struct DeviceReading {
     let id: String                 // CBPeripheral.identifier.uuidString
     var name: String               // 广播里带来的名字（可能是随机串）
+    var peripheralName: String?    // peripheral.name：bluetoothd 名字缓存，与系统蓝牙列表同源
     var rawRSSI: Int               // 最近一次原始 RSSI
     var emaRSSI: Double            // 指数滑动平均
     var lastSeen: Date
@@ -118,11 +122,15 @@ final class PresenceMonitor: NSObject {
 
     /// 界面上应显示的名字。识别不出真名时带上 identifier 前缀，方便区分多个"未知设备"
     func displayName(_ id: String) -> String {
-        // 优先级：本 App 里手动改的名 > 设备自己广播的名字 > GATT 读到的型号
-        // 广播名是用户在设备设置里起的（比如把 iPhone 改名成 xiaomi17），
-        // 比 GATT 的 "iPhone18,3 · Apple Inc." 更贴近用户认知，所以排在前面。
+        // 优先级：本 App 里手动改的名 > 广播名 > 系统缓存名 > 记住的名 > GATT 读到的型号。
+        // 广播名是用户在设备设置里起的（比如把 iPhone 改名成 xiaomi17），排最前；
+        // 但安卓广播名常是随机串，这时要用 peripheral.name（系统蓝牙列表显示的那份
+        // bluetoothd 缓存名）补位，不能让随机串把它盖成"未知设备"。
         if let a = Settings.shared.alias(id) { return a }
-        if let d = devices[id], !Self.looksRandom(d.name) { return d.name }
+        if let d = devices[id] {
+            if Self.isHumanName(d.name) { return d.name }
+            if let pn = d.peripheralName, Self.isHumanName(pn) { return pn }
+        }
         if let l = Settings.shared.learnedName(id) { return l }
         if let g = gattNames[id] { return g }
         return "未知设备 · " + String(id.prefix(8))
@@ -131,10 +139,23 @@ final class PresenceMonitor: NSObject {
     /// 名字是否还是占位（用于界面配色与"命名"按钮）
     func isUnknownName(_ id: String) -> Bool {
         if Settings.shared.alias(id) != nil { return false }
-        if let d = devices[id], !Self.looksRandom(d.name) { return false }
+        if let d = devices[id], Self.isHumanName(d.name) || (d.peripheralName.map(Self.isHumanName) ?? false) {
+            return false
+        }
         if Settings.shared.learnedName(id) != nil { return false }
         if gattNames[id] != nil { return false }
         return true
+    }
+
+    /// 是不是"人能认出的真名"（非空、非占位、不像随机串）
+    private static func isHumanName(_ s: String) -> Bool {
+        !s.isEmpty && s != "未知设备" && !looksRandom(s)
+    }
+
+    /// 记住一个真名（去重写入，避免每次广播都碰 UserDefaults）
+    private func learn(_ id: String, _ name: String) {
+        guard Self.isHumanName(name), Settings.shared.learnedName(id) != name else { return }
+        Settings.shared.setLearnedName(id, name)
     }
 
     /// 名字是否还需要解析（用来在界面上显示"识别中…"）
@@ -395,7 +416,8 @@ extension PresenceMonitor: CBCentralManagerDelegate {
 
         let id = peripheral.identifier.uuidString
         let advName = advertisementData[CBAdvertisementDataLocalNameKey] as? String
-        let name = (advName?.isEmpty == false ? advName! : (peripheral.name ?? "未知设备"))
+        let periphName = peripheral.name
+        let name = (advName?.isEmpty == false ? advName! : (periphName ?? "未知设备"))
 
         // 广播包和 scan response 是分开来的：有的包带服务号、有的不带。
         // 所以对同一台设备按并集累积，不要用后到的空包覆盖掉已知信息。
@@ -413,19 +435,28 @@ extension PresenceMonitor: CBCentralManagerDelegate {
             // 设备改名后广播名会变，只要新名字不是随机串就跟着更新
             if name != "未知设备", !Self.looksRandom(name) {
                 existing.name = name
-                Settings.shared.setLearnedName(id, name)
             }
+            // 系统缓存名（peripheral.name）单独保存：广播名是随机串时它是唯一真名
+            if let pn = periphName, Self.isHumanName(pn) {
+                existing.peripheralName = pn
+            }
+            // 任一来源的真名都记住，重启后不依赖再次收到广播
+            learn(id, name)
+            if let pn = periphName { learn(id, pn) }
             devices[id] = existing
         } else {
             devices[id] = DeviceReading(
                 id: id,
                 name: name,
+                peripheralName: (periphName.map(Self.isHumanName) ?? false) ? periphName : nil,
                 rawRSSI: rssi,
                 emaRSSI: Double(rssi),
                 lastSeen: now,
                 history: Array(repeating: nil, count: historyLength),
                 serviceUUIDs: uuids
             )
+            learn(id, name)
+            if let pn = periphName { learn(id, pn) }
             Log.debug("发现新设备 \(name) (\(id.prefix(8))) rssi=\(rssi)")
         }
 
