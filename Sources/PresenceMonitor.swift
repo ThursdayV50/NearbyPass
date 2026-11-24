@@ -106,18 +106,20 @@ final class PresenceMonitor: NSObject {
 
     // MARK: - 名字
 
-    /// 广播名是否像随机串（长度很长 / 无空格无分隔的混合大小写）
+    private static let opaqueNameCharacters = CharacterSet(
+        charactersIn: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/="
+    )
+    private static let opaqueNameMarkers = CharacterSet(charactersIn: "0123456789+/=")
+
+    /// 识别类似 Base64 的匿名广播名，同时保留无空格的设备型号名。
     static func looksRandom(_ s: String) -> Bool {
-        if s.isEmpty { return true }
-        if s == "未知设备" { return true }
-        let hasCJK = s.unicodeScalars.contains { $0.value >= 0x4E00 && $0.value <= 0x9FFF }
-        if hasCJK { return false }
-        if s.contains(" ") { return false }
-        // 带人类常用分隔符的，基本是有意义的名字（ESP32-AB12、lemesh.light 之类）
-        let human = CharacterSet(charactersIn: "-_.()[]")
-        if s.rangeOfCharacter(from: human) != nil { return false }
-        // 剩下的多半是 Android / iOS 随机广播名，形如 NZ85fXTM5lfKJ/UXHiDNOZ84
-        return s.count >= 12
+        if s.isEmpty || s == "未知设备" { return true }
+        guard s.utf8.count >= 20,
+              s.unicodeScalars.allSatisfy(opaqueNameCharacters.contains),
+              s.rangeOfCharacter(from: .uppercaseLetters) != nil,
+              s.rangeOfCharacter(from: .lowercaseLetters) != nil,
+              s.rangeOfCharacter(from: opaqueNameMarkers) != nil else { return false }
+        return DeviceClassifier.classify(name: s, serviceUUIDs: []) == .unknown
     }
 
     /// 界面上应显示的名字。识别不出真名时带上 identifier 前缀，方便区分多个"未知设备"

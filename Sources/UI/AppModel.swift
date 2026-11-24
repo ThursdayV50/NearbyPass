@@ -6,17 +6,24 @@
 import SwiftUI
 import AppKit
 import Combine
+import CoreBluetooth
 
 struct DeviceVM: Identifiable, Equatable {
     let id: String
     var name: String
     var rssi: Int?
     var age: TimeInterval
+    var hasRecentBroadcast: Bool
     var trusted: Bool
     var primary: Bool
     var unknownName: Bool
     var resolving: Bool
     var kind: DeviceKind = .unknown
+
+    var broadcastAgeText: String {
+        let seconds = max(0, Int(age))
+        return seconds == 0 ? "刚收到广播" : "\(seconds) 秒前"
+    }
 }
 
 @MainActor
@@ -82,9 +89,21 @@ final class AppModel: ObservableObject {
     // 权限 / 状态
     @Published var axTrusted = false
     @Published var hasPassword = false
-    @Published var bluetoothOn = false
+    @Published private(set) var bluetoothState: CBManagerState = .unknown
     @Published var launchAtLogin = LoginItem.isEnabled || LoginItem.needsApproval
     @Published var loginItemProblem: String? = nil
+
+    var bluetoothOn: Bool { bluetoothState == .poweredOn }
+
+    var bluetoothStatusText: String? {
+        switch bluetoothState {
+        case .poweredOn:    return nil
+        case .poweredOff:   return "蓝牙已关闭"
+        case .unauthorized: return "NearbyPass 未获蓝牙权限"
+        case .unsupported:  return "此 Mac 不支持蓝牙扫描"
+        default:            return "正在等待蓝牙就绪"
+        }
+    }
 
     private var timer: Timer?
 
@@ -115,7 +134,7 @@ final class AppModel: ObservableObject {
         bestRSSI = p.bestTrustedRSSI()
         paused = s.paused
         showInMenuBar = s.showInMenuBar
-        bluetoothOn = (p.bluetoothState == .poweredOn)
+        if bluetoothState != p.bluetoothState { bluetoothState = p.bluetoothState }
         // 登录项状态以系统为准：用户可能直接在「系统设置 › 登录项」里改
         let loggedIn = LoginItem.isEnabled || LoginItem.needsApproval
         if loggedIn != launchAtLogin { launchAtLogin = loggedIn }
@@ -137,6 +156,7 @@ final class AppModel: ObservableObject {
                 name: p.displayName(d.id),
                 rssi: shown,
                 age: age,
+                hasRecentBroadcast: live != nil,
                 trusted: s.isTrusted(d.id),
                 primary: s.primaryDeviceID == d.id,
                 unknownName: p.isUnknownName(d.id),

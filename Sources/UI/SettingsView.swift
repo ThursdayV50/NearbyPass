@@ -21,9 +21,9 @@ struct SettingsView: View {
 
     private var content: some View {
         VStack(alignment: .leading, spacing: 0) {
-            behaviorSection
-            thresholdSection
             deviceSection
+            thresholdSection
+            behaviorSection
             advancedSection
         }
         .padding(.horizontal, 22)
@@ -102,7 +102,7 @@ struct SettingsView: View {
     }
 
     private var pillText: String {
-        guard m.bluetoothOn else { return "蓝牙已关闭" }
+        if let status = m.bluetoothStatusText { return status }
         // 和列表里那一行同源：都取瞬时 RSSI，免得两处差 1 dB
         if let r = m.devices.first(where: { $0.primary })?.rssi ?? m.bestRSSI {
             return "\(m.presenceText) · \(r) dBm"
@@ -224,126 +224,26 @@ struct SettingsView: View {
     // MARK: - 设备
 
     private var deviceSection: some View {
-        Section(title: "设备", note: "星标 = 主设备：解锁和锁屏只认这一台") {
-            VStack(alignment: .leading, spacing: 8) {
-                HStack(spacing: 8) {
-                    Toggle(isOn: Binding(get: { m.wearableOnly },
-                                         set: { m.setWearableOnly($0) })) {
-                        Text("只看手机 / 手表 / 手环")
-                            .font(Theme.text(10.5))
-                            .foregroundStyle(Theme.ink2)
-                    }
-                    .toggleStyle(.switch)
-                    .controlSize(.mini)
-                    .tint(Theme.switchOn)
-                    Spacer(minLength: 6)
-                    if m.hiddenDeviceCount > 0 {
-                        Text("已隐藏 \(m.hiddenDeviceCount) 个")
-                            .font(Theme.text(10))
-                            .foregroundStyle(Theme.ink3)
-                    }
-                }
+        Section(title: "设备", note: trustedHint) {
+            DeviceDiscoveryView(model: m) { device in
+                renameText = device.name
+                renameTarget = device
+            }
 
-                if m.devices.isEmpty {
-                    Text(m.hiddenDeviceCount > 0
-                         ? "没有随身设备（已隐藏 \(m.hiddenDeviceCount) 个）"
-                         : "正在扫描…")
-                        .font(Theme.text(11))
-                        .foregroundStyle(Theme.ink3)
-                        .frame(maxWidth: .infinity, alignment: .center)
-                        .padding(.vertical, 20)
-                } else {
-                    ScrollView(.vertical, showsIndicators: false) {
-                        VStack(spacing: 0) {
-                            ForEach(m.displayDevices) { d in
-                                deviceRow(d)
-                                Rectangle()
-                                    .fill(Theme.hair2)
-                                    .frame(height: 1)
-                            }
-                        }
-                    }
-                    .frame(height: 185)      // 5 行整，避免切出半行
-                }
+            Text("勾选设备用于在场判断，星标设备触发自动解锁。")
+                .font(Theme.text(11))
+                .foregroundStyle(Theme.ink2)
 
-                if m.primaryIsWeak {
-                    warn("主设备不是随身设备，人离开时可能不会自动锁屏")
-                }
-
-                HStack(spacing: 8) {
-                    Button {
-                        m.rescan()
-                    } label: {
-                        Label("重新扫描", systemImage: "arrow.clockwise")
-                            .font(Theme.text(10.5))
-                            .foregroundStyle(Theme.ink2)
-                    }
-                    .buttonStyle(.borderless)
-                    Spacer()
-                    Text(trustedHint)
-                        .font(Theme.text(10))
-                        .foregroundStyle(Theme.ink3)
-                }
-                .padding(.top, 2)
+            if m.primaryIsWeak {
+                warn("主设备不是随身设备，人离开时可能不会自动锁屏")
             }
         }
-    }
-
-    private func deviceRow(_ d: DeviceVM) -> some View {
-        HStack(spacing: 9) {
-            Button { m.toggleTrust(d.id) } label: {
-                CheckCircle(on: d.trusted)
-            }
-            .buttonStyle(.plain)
-            .help(d.trusted ? "勾选：它在附近就算你在场" : "未勾选：忽略这台")
-
-            Text(d.name)
-                .font(Theme.text(11.5))
-                .lineLimit(1)
-                .truncationMode(.middle)
-                .foregroundStyle(d.rssi == nil ? Theme.ink3 : Theme.ink)
-                .onTapGesture(count: 2) {
-                    renameText = d.name
-                    renameTarget = d
-                }
-
-            if d.resolving {
-                ProgressView().controlSize(.mini).scaleEffect(0.7)
-            }
-
-            if !d.kind.isPresenceCapable {
-                Text(d.kind.badge)
-                    .font(Theme.text(9))
-                    .padding(.horizontal, 4)
-                    .padding(.vertical, 1)
-                    .background(Theme.hair2, in: Capsule())
-                    .foregroundStyle(Theme.ink3)
-            }
-
-            Spacer(minLength: 6)
-
-            Text(d.rssi.map { "\($0) dBm" } ?? "未在附近")
-                .font(Theme.mono(10.5))
-                .foregroundStyle(Theme.ink3)
-                .frame(width: 76, alignment: .trailing)
-
-            Button { m.setPrimary(d.id) } label: {
-                StarMark(on: d.primary)
-                    .frame(width: 26, height: 26)
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .help(d.primary ? "主设备：解锁和锁屏只认这一台" : "设为主设备：解锁和锁屏只认这一台")
-        }
-        .padding(.vertical, 5)
-        .contentShape(Rectangle())
     }
 
     private var trustedHint: String {
-        let shown = m.devices.filter { $0.trusted }.count
-        let missing = m.trustedCount - shown
-        if missing > 0 { return "已勾选 \(m.trustedCount) 个（\(missing) 个不在附近）" }
-        return "已勾选 \(m.trustedCount) 个"
+        let missing = m.trustedCount - m.devices.filter { $0.trusted }.count
+        if missing > 0 { return "已勾选 \(m.trustedCount) 台 · \(missing) 台无扫描记录" }
+        return "已勾选 \(m.trustedCount) 台"
     }
 
     // MARK: - 高级

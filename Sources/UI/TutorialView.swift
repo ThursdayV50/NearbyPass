@@ -243,72 +243,23 @@ private struct DevicePage: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             head("挑一台随身设备",
-                 "手机或手环最合适——它会跟着你走。星标那台是主设备，解锁和锁屏只认它。")
+                 "勾选设备用于在场判断，星标设备触发自动解锁。")
 
-            ScrollView(.vertical, showsIndicators: false) {
-                VStack(spacing: 0) {
-                    ForEach(m.displayDevices) { d in
-                        row(d)
-                        Rectangle().fill(Theme.hair2).frame(height: 1)
-                    }
-                }
-            }
-            .frame(height: 244)
-            .background(Theme.sheet2)
-            .overlay(Rectangle().strokeBorder(Theme.hair, lineWidth: 1))
+            DeviceDiscoveryView(model: m, visibleRows: 5)
 
-            HStack(spacing: 8) {
-                Image(systemName: hasPrimary ? "checkmark.circle.fill" : "circle.dashed")
-                    .font(.system(size: 11))
-                    .foregroundStyle(hasPrimary ? Theme.signal : Theme.ink3)
-                Text(hasPrimary ? "主设备：\(m.primaryName)" : "还没选主设备：点右边的星标")
-                    .font(Theme.text(10.5))
-                    .foregroundStyle(hasPrimary ? Theme.ink2 : Theme.away)
-                Spacer()
-                if m.hiddenDeviceCount > 0 {
-                    Text("已隐藏 \(m.hiddenDeviceCount) 个")
-                        .font(Theme.text(10))
-                        .foregroundStyle(Theme.ink3)
-                }
+            Label {
+                Text(hasPrimary ? "解锁主设备 · \(m.primaryName)" : "点设备右侧的星标设为解锁主设备")
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+            } icon: {
+                Image(systemName: hasPrimary ? "star.fill" : "star")
+                    .foregroundStyle(Theme.signal)
             }
+            .font(Theme.text(11))
+            .foregroundStyle(Theme.ink2)
             .padding(.top, 10)
         }
         .padding(.horizontal, 24)
-    }
-
-    private func row(_ d: DeviceVM) -> some View {
-        HStack(spacing: 9) {
-            Button { m.toggleTrust(d.id) } label: {
-                CheckCircle(on: d.trusted)
-            }
-            .buttonStyle(.plain)
-            .focusEffectDisabled()
-
-            Text(d.name)
-                .font(Theme.text(11.5))
-                .foregroundStyle(d.rssi == nil ? Theme.ink3 : Theme.ink)
-                .lineLimit(1)
-
-            if !d.kind.isPresenceCapable {
-                Text(d.kind.badge)
-                    .font(Theme.text(9))
-                    .padding(.horizontal, 4).padding(.vertical, 1)
-                    .background(Theme.hair2, in: Capsule())
-                    .foregroundStyle(Theme.ink3)
-            }
-            Spacer(minLength: 6)
-            Text(d.rssi.map { "\($0) dBm" } ?? "未在附近")
-                .font(Theme.mono(10.5))
-                .foregroundStyle(Theme.ink3)
-                .frame(width: 72, alignment: .trailing)
-            Button { m.setPrimary(d.id) } label: {
-                StarMark(on: d.primary).frame(width: 26, height: 26)
-            }
-            .buttonStyle(.plain)
-            .focusEffectDisabled()
-        }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 6)
     }
 }
 
