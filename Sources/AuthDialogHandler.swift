@@ -1,372 +1,389 @@
-// AuthDialogHandler.swift — F1：系统授权弹窗出现时自动填密码
-//
-// Phase 0 已验证：
-//   · 弹窗进程 = SecurityAgent，主窗 layer=1000，尺寸约 260x322
-//   · AX 树完整可读可写：AXTextField + AXSubrole=AXSecureTextField，按钮 desc="好" / "取消"
-//   · AX setValue 与 CGEventPost 都能写入，回读为空是正常现象（secure field 不露明文）
-//   · 并发授权请求会复用同一进程、窗口坐标完全重合 → 按 window number 去重
-import Foundation
-import CoreGraphics
+import AppKit
 import ApplicationServices
+import CoreGraphics
 
 final class AuthDialogHandler {
-
     static let shared = AuthDialogHandler()
 
-    private struct Win {
-        let pid: pid_t
-        let bounds: CGRect
-        let number: Int
+    private enum Host: Equatable {
+        case authorizationAgent, localAuthentication, systemSettings, passwords
+
+        init?(executablePath path: String) {
+            switch path {
+            case "/System/Applications/Passwords.app/Contents/MacOS/Passwords":
+                self = .passwords
+            case "/System/Applications/System Settings.app/Contents/MacOS/System Settings":
+                self = .systemSettings
+            default:
+                guard path.hasPrefix("/System/Library/") else { return nil }
+                if path.hasSuffix("/SecurityAgent.bundle/Contents/MacOS/SecurityAgent")
+                    || path.hasSuffix("/SecurityAgent.app/Contents/MacOS/SecurityAgent") {
+                    self = .authorizationAgent
+                } else if path.hasSuffix("/coreautha.bundle/Contents/MacOS/coreautha")
+                    || path.hasSuffix("/LocalAuthenticationRemoteService.xpc/Contents/MacOS/LocalAuthenticationRemoteService")
+                    || path.hasSuffix("/LocalAuthentication.framework/Support/coreauthd") {
+                    self = .localAuthentication
+                } else {
+                    return nil
+                }
+            }
+        }
     }
 
+    private struct Target {
+        let host: Host
+        let pid: pid_t
+        let window: AXUIElement
+        let scope: AXUIElement
+        let bounds: CGRect
+
+        func matches(_ other: Target) -> Bool {
+            pid == other.pid && CFEqual(window, other.window) && CFEqual(scope, other.scope)
+        }
+    }
+
+    private enum Prompt {
+        case password(field: AXUIElement, submit: AXUIElement?)
+        case usePassword(button: AXUIElement)
+
+        func matches(_ other: Prompt) -> Bool {
+            switch (self, other) {
+            case (.password(let field, _), .password(let otherField, _)),
+                 (.usePassword(let field), .usePassword(let otherField)):
+                return CFEqual(field, otherField)
+            default:
+                return false
+            }
+        }
+    }
+
+    private static let passwordActions: Set<String> = [
+        "use password", "use password instead", "enter password", "unlock with password",
+        "使用密码", "输入密码", "使用密码解锁", "使用密碼", "輸入密碼", "使用密碼解鎖"
+    ]
+    private static let unlockActions: Set<String> = [
+        "unlock", "unlock passwords", "解锁", "解锁密码", "解鎖", "解鎖密碼"
+    ]
+    private static let passwordsLockedHeadings = [
+        "passwordsislocked", "passwordsarelocked", "密码已锁定", "密碼已鎖定", "密碼已鎖住"
+    ]
+    private static let headingSeparators = CharacterSet.whitespacesAndNewlines.union(
+        CharacterSet(charactersIn: "\"“”‘’「」『』")
+    )
+    private static let submitActions = unlockActions.union([
+        "ok", "modify settings", "continue", "allow", "authenticate",
+        "好", "修改设置", "确定", "繼續", "继续", "允许", "允許", "認證", "认证"
+    ])
+
     private var timer: Timer?
-    private var handled: Set<Int> = []
-    private var lastSubmit: [Int: Date] = [:]
-    /// 已经提示过「设备不在附近」的窗口，避免每 0.4 秒刷一条日志
-    private var warnedNotNearby: Set<Int> = []
+    private var handled: [(target: Target, prompt: Prompt)] = []
     private var cooldownUntil: Date?
     private var busy = false
-    private var reportedOwners: Set<String> = []
 
     private init() {}
 
     func start() {
-        let t = Timer(timeInterval: 0.4, repeats: true) { [weak self] _ in
+        let timer = Timer(timeInterval: 0.4, repeats: true) { [weak self] _ in
             self?.tick()
         }
-        RunLoop.main.add(t, forMode: .common)
-        timer = t
+        RunLoop.main.add(timer, forMode: .common)
+        self.timer = timer
         Log.info("授权弹窗监听已启用（冷却 \(Int(Settings.shared.authCooldown)) 秒）")
     }
 
-    // MARK: - 轮询
+    private var canFill: Bool {
+        let settings = Settings.shared
+        return settings.authFillEnabled && !settings.paused && AX.isTrusted
+            && SessionMonitor.shared.state == .unlocked
+            && PresenceMonitor.shared.presence == .present
+    }
 
     private func tick() {
-        let s = Settings.shared
-        guard s.authFillEnabled, !s.paused else { return }
-        guard SessionMonitor.shared.state == .unlocked else { return }
-        guard !busy else { return }
-        if let c = cooldownUntil, Date() < c { return }
+        guard canFill, !busy, !ConfirmPanel.shared.isPresenting,
+              cooldownUntil.map({ Date() >= $0 }) ?? true else { return }
 
-        let windows = authMainWindows()
-        let live = Set(windows.map { $0.number })
-        handled = handled.intersection(live)
-        warnedNotNearby = warnedNotNearby.intersection(live)
-
-        guard let fresh = windows.first(where: { !handled.contains($0.number) }) else { return }
-
-        // 顺序很重要：presence 不满足时**不能**标记 handled，
-        // 否则 App 恰好在启动瞬间（蓝牙还没扫到任何设备，状态是「未知」）
-        // 碰上弹窗，这个弹窗就被永久放弃，等设备靠近也不会再填。
-        let presence = PresenceMonitor.shared.presence
-        guard presence == .present else {
-            if !warnedNotNearby.contains(fresh.number) {
-                warnedNotNearby.insert(fresh.number)
-                Log.info("检测到授权弹窗，但设备不在附近（\(presence.rawValue)），等设备靠近再填")
-            }
-            return
+        let targets = authTargets()
+        handled.removeAll { previous in
+            !targets.contains { previous.target.matches($0.target) && previous.prompt.matches($0.prompt) }
         }
-        guard KeychainStore.shared.hasPassword() else {
-            handled.insert(fresh.number)
-            Log.warn("检测到授权弹窗，但还没设置密码")
-            return
-        }
-        handled.insert(fresh.number)
+        guard let (target, prompt) = targets.first(where: { target, prompt in
+            !handled.contains { $0.target.matches(target) && $0.prompt.matches(prompt) }
+        }), KeychainStore.shared.hasPassword() else { return }
+        handled.append((target, prompt))
 
-        let size = "\(Int(fresh.bounds.width))x\(Int(fresh.bounds.height))"
-        Log.info("检测到授权弹窗（\(size)），准备确认后填写")
-
-        let primaryID = Settings.shared.primaryDeviceID ?? ""
-        let devName = primaryID.isEmpty
-            ? "（未指定设备）"
-            : PresenceMonitor.shared.displayName(primaryID)
-        var devRSSI = 0
-        if !primaryID.isEmpty {
-            if let live = PresenceMonitor.shared.liveRSSI(primaryID) {
-                devRSSI = live
-            } else if let d = PresenceMonitor.shared.device(primaryID) {
-                devRSSI = Int(d.emaRSSI.rounded())
-            }
-        }
-        ConfirmPanel.shared.show(device: devName, rssi: devRSSI, anchor: fresh.bounds,
-                                 windowNumber: fresh.number) { [weak self] in
-            self?.fill(pid: fresh.pid, windowNumber: fresh.number)
+        let presence = PresenceMonitor.shared
+        let primary = Settings.shared.primaryDeviceID
+        let name = primary.map(presence.displayName) ?? "信任设备在附近"
+        let rssi = primary.flatMap(presence.liveRSSI) ?? presence.bestTrustedRSSI() ?? 0
+        let reason = target.host == .passwords
+            ? "为「密码」App 的解锁提示填入登录密码"
+            : "为这次系统授权自动填入登录密码"
+        Log.info("检测到系统认证提示，等待用户确认")
+        ConfirmPanel.shared.show(
+            device: name, rssi: rssi, reason: reason, anchor: target.bounds,
+            isTargetActive: { Self.currentPrompt(for: target)?.matches(prompt) == true }
+        ) { [weak self] in
+            self?.fill(target, approved: prompt)
         }
     }
 
-    /// 系统认证弹窗的宿主进程白名单。
-    /// - `SecurityAgent`：Authorization Services 路径（`do shell script with administrator privileges`、
-    ///   各类 `AuthorizationCopyRights` 请求）
-    /// - `coreautha`：LocalAuthenticationUI 路径（`LAContext.evaluatePolicy`；
-    ///   系统设置的「解锁」、Passwords.app 等走这条）
-    /// 两者弹窗的 AX 结构一致：AXSecureTextField + 「好」/「取消」。
-    /// 认证弹窗上「确认」类按钮的文案。不同宿主、不同场景用的词不一样。
-    private static let submitLabels = [
-        "好", "修改设置", "解锁", "确定", "继续", "允许",
-        "OK", "Unlock", "Modify Settings"
-    ]
+    private struct VisibleWindow {
+        let pid: pid_t
+        let bounds: CGRect
+    }
 
-    private static let authOwnerNames: Set<String> = [
-        "SecurityAgent", "coreautha", "coreauthd",
-        "系统设置", "System Settings", "隐私与安全", "Privacy & Security",
-        "密码", "Passwords"
-    ]
-
-    /// 系统常驻浮层，永远不是认证弹窗
-    private static let ignoreOwners: Set<String> = [
-        "Window Server", "CursorUIViewService", "TextInputSwitcher",
-        "Input Source Pro", "Control Center", "Notification Center",
-        "Spotlight", "Dock"
-    ]
-
-    /// 找出当前屏幕上的「系统认证弹窗」。
-    ///
-    /// 三条现实约束（都是实测踩出来的）：
-    /// 1. 宿主进程不固定：SecurityAgent（Authorization Services）、coreautha
-    ///    （LocalAuthenticationUI）之外，系统设置自己也会弹 —— macOS 换版本就可能换人，
-    ///    所以只写死进程名必然漏。
-    /// 2. **layer 不固定**：SecurityAgent/coreautha 的独立弹窗是 layer=1000+，
-    ///    但挂在「系统设置」上的 sheet 实测是 **layer=0**（260x338 @ 616,345）。
-    ///    只认 layer>=1000 会永远抓不到后者。
-    /// 3. 判据的最终裁判是「AX 树里能不能找到 AXSecureTextField」——
-    ///    系统设置主窗口（740x968）里没有 secure field，不会误判。
-    private func authMainWindows() -> [Win] {
+    private static func visibleWindows() -> [VisibleWindow] {
         guard let list = CGWindowListCopyWindowInfo(
             [.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID
         ) as? [[String: Any]] else { return [] }
-
-        var out: [Win] = []
-        for w in list {
-            guard let pid = (w[kCGWindowOwnerPID as String] as? NSNumber)?.int32Value,
-                  let num = (w[kCGWindowNumber as String] as? NSNumber)?.intValue,
-                  pid != getpid()
-            else { continue }
-            let layer = (w[kCGWindowLayer as String] as? NSNumber)?.intValue ?? 0
-            guard layer >= 0, layer < 100_000 else { continue }
-
-            let owner = (w[kCGWindowOwnerName as String] as? String) ?? ""
-            let title = (w[kCGWindowName as String] as? String) ?? ""
-            if Self.ignoreOwners.contains(owner) { continue }
-
-            var bounds = CGRect.zero
-            if let b = w[kCGWindowBounds as String] as? NSDictionary,
-               let r = CGRect(dictionaryRepresentation: b as CFDictionary) {
-                bounds = r
-            }
-            // 认证弹窗的实际尺寸区间（SecurityAgent 260x322 / coreautha 260x302 /
-            // 系统设置 sheet 260x338），放宽一些留余量
-            guard bounds.width >= 200, bounds.width <= 700,
-                  bounds.height >= 150, bounds.height <= 800 else { continue }
-
-            // 只认系统认证宿主。绝不因为"某个进程里有密码框"就当成授权弹窗——
-            // 浏览器页面里的密码输入框也会命中，那样在网页里打字就会误弹。
-            let known = Self.authOwnerNames.contains(owner)
-                || Self.authOwnerNames.contains(title)
-            guard known else {
-                // 只记录一次候选，便于以后发现新的认证宿主；不采取任何动作
-                if bounds.width <= 520, bounds.height <= 520,
-                   !reportedOwners.contains(owner),
-                   !AX.secureFields(pid: pid).isEmpty {
-                    reportedOwners.insert(owner)
-                    Log.debug("忽略疑似窗口（非认证宿主）: \(owner) \(Int(bounds.width))x\(Int(bounds.height)) layer=\(layer)")
-                }
-                continue
-            }
-
-            // 即便宿主在白名单里，也要求窗口里确实有密码框，避免把启动瞬间的空窗口当真
-            guard !AX.secureFields(pid: pid).isEmpty else { continue }
-            out.append(Win(pid: pid, bounds: bounds, number: num))
+        return list.compactMap { window in
+            guard let pid = (window[kCGWindowOwnerPID as String] as? NSNumber)?.int32Value,
+                  pid != getpid(),
+                  let raw = window[kCGWindowBounds as String] as? NSDictionary,
+                  let bounds = CGRect(dictionaryRepresentation: raw as CFDictionary),
+                  bounds.width >= 180, bounds.height >= 100 else { return nil }
+            return VisibleWindow(pid: pid, bounds: bounds)
         }
-        return out
     }
 
-    // MARK: - 填写
+    private static func matches(_ axBounds: CGRect, _ cgBounds: CGRect) -> Bool {
+        // 窗口边框在两个 API 中的坐标可能相差几个点。
+        abs(axBounds.minX - cgBounds.minX) <= 8 && abs(axBounds.minY - cgBounds.minY) <= 8
+            && abs(axBounds.width - cgBounds.width) <= 12 && abs(axBounds.height - cgBounds.height) <= 12
+    }
 
-    private func fill(pid: pid_t, windowNumber: Int) {
-        busy = true
-        let settings = Settings.shared
-        guard settings.authFillEnabled, !settings.paused,
-              SessionMonitor.shared.state == .unlocked,
-              PresenceMonitor.shared.presence == .present else {
-            Log.info("确认后状态已变化，取消填写")
-            ConfirmPanel.shared.updateStatus("状态已变化，未填写")
-            ConfirmPanel.shared.finish(after: 1.0)
-            busy = false
-            return
+    private static func host(_ pid: pid_t) -> Host? {
+        if let path = NSRunningApplication(processIdentifier: pid)?.executableURL?.path,
+           let host = Host(executablePath: path) {
+            return host
         }
-        var password = KeychainStore.shared.load() ?? ""
+        var path = [CChar](repeating: 0, count: 4 * Int(MAXPATHLEN))
+        guard proc_pidpath(pid, &path, UInt32(path.count)) > 0 else { return nil }
+        return Host(executablePath: String(cString: path))
+    }
 
-        guard !password.isEmpty else {
-            Log.error("密码为空，放弃填写")
-            busy = false
-            return
-        }
-
-        // ① 目标弹窗还在吗？不在说明用户已经自己完成了
-        guard Self.windowExists(windowNumber) else {
-            Log.info("目标弹窗已消失（你已手动完成），不做任何注入")
-            ConfirmPanel.shared.updateStatus("你已完成，未做操作")
-            ConfirmPanel.shared.finish(after: 0.9)
-            KeychainStore.zeroString(&password)
-            busy = false
-            handled.insert(windowNumber)
-            return
-        }
-
-        if findField(pid: pid, deadline: Date().addingTimeInterval(2)) == nil {
-            // 可能是 Touch ID 形态，先点「使用密码…」
-            if pressUsePassword(pid: pid) {
-                usleep(500000)
+    private func authTargets() -> [(target: Target, prompt: Prompt)] {
+        let visible = Self.visibleWindows()
+        let byPID = Dictionary(grouping: visible, by: \.pid)
+        var seen: Set<pid_t> = []
+        var targets: [(Target, Prompt)] = []
+        for entry in visible where seen.insert(entry.pid).inserted {
+            let pid = entry.pid
+            guard let host = Self.host(pid) else { continue }
+            let app = AX.app(pid)
+            let windows = AX.attr(app, kAXWindowsAttribute) as? [AXUIElement] ?? []
+            for window in windows {
+                guard let bounds = AX.frame(window),
+                      byPID[pid]?.contains(where: { Self.matches(bounds, $0.bounds) }) == true
+                else { continue }
+                for scope in Self.scopes(in: window) {
+                    let target = Target(host: host, pid: pid, window: window, scope: scope,
+                                        bounds: AX.frame(scope) ?? bounds)
+                    if let prompt = Self.prompt(in: target) { targets.append((target, prompt)) }
+                }
             }
         }
+        return targets
+    }
 
-        guard let field = findField(pid: pid, deadline: Date().addingTimeInterval(3)) else {
-            Log.error("授权弹窗中找不到密码框，放弃")
-            KeychainStore.zeroString(&password)
-            fail(windowNumber: windowNumber, reason: "找不到密码框")
-            return
+    private static func visible(_ target: Target) -> Bool {
+        guard let frame = AX.frame(target.window) else { return false }
+        return visibleWindows().contains { $0.pid == target.pid && matches(frame, $0.bounds) }
+    }
+
+    private static func scopes(in window: AXUIElement) -> [AXUIElement] {
+        let sheets = AX.children(window).filter { AX.role($0) == kAXSheetRole as String }
+        return sheets.isEmpty ? [window] : sheets
+    }
+
+    private static func currentPrompt(for target: Target) -> Prompt? {
+        guard visible(target) else { return nil }
+        return prompt(in: target)
+    }
+
+    private static func prompt(in target: Target) -> Prompt? {
+        let root = target.scope
+        guard !AX.role(root).isEmpty,
+              scopes(in: target.window).contains(where: { CFEqual(root, $0) }) else { return nil }
+
+        let elements = AX.all(root, limit: 240)
+        let fields = elements.filter { AX.subrole($0) == kAXSecureTextFieldSubrole as String }
+        let buttons = elements.filter { AX.role($0) == kAXButtonRole as String }
+        let submit = buttons.first { matchesLabel($0, in: submitActions) }
+        let fallback = buttons.first { matchesLabel($0, in: passwordActions) }
+
+        if target.host == .passwords {
+            // 密码 App 的编辑页面也有安全输入框。只有解锁入口可使用 Mac 登录密码。
+            let unlock = buttons.first { matchesLabel($0, in: unlockActions) }
+            if fields.isEmpty { return fallback.map(Prompt.usePassword) }
+            guard fields.count == 1, let field = fields.first,
+                  unlock != nil || elements.contains(where: isPasswordsLockedHeading),
+                  !elements.contains(where: {
+                      AX.role($0) == kAXTextFieldRole as String && !CFEqual($0, field)
+                  }) else { return nil }
+            return .password(field: field, submit: unlock)
         }
 
-        // ② 密码框里已经有内容 → 用户自己输入了，只帮它点提交，绝不覆盖
-        if AX.fieldHasText(field) {
-            Log.info("检测到密码框已有内容（你手动输入了），只提交、不覆盖")
-            KeychainStore.zeroString(&password)
-            submit(pid: pid, windowNumber: windowNumber, userTyped: true)
-            return
+        if target.host == .systemSettings && CFEqual(root, target.window) {
+            let isDialog = AX.subrole(root) == kAXDialogSubrole as String
+                || (AX.attr(root, kAXModalAttribute) as? Bool) == true
+            guard isDialog || (target.bounds.width <= 520 && target.bounds.height <= 650)
+            else { return nil }
         }
 
-        // 优先 AX 直接写值：不依赖键盘焦点。
-        // 这条弹窗是挂在「系统设置」上的 sheet，焦点不一定在密码框上，
-        // 合成键盘事件有可能打到别处（实测就是这个原因导致填不进去）。
-        let focusErr = AX.focus(field)
-        usleep(60000)
-        let setErr = AX.setValue(field, password)
-        if setErr != .success {
-            if Self.canTypeSafely(pid: pid) {
-                Log.warn("AX 写值失败（\(setErr.rawValue)），焦点确认在密码框，改用键盘投递")
-                if !Injector.shared.typeText(password, perCharDelayMS: 12) {
-                    Log.error("键盘投递也失败")
-                }
-            } else {
-                // 宁可不填，也不能把密码打进别的窗口
-                Log.error("AX 写值失败且焦点不在该密码框，放弃键盘投递")
-                KeychainStore.zeroString(&password)
-                fail(windowNumber: windowNumber, reason: "无法安全写入密码")
+        if fields.isEmpty { return fallback.map(Prompt.usePassword) }
+        guard fields.count == 1, let field = fields.first else { return nil }
+        return .password(field: field, submit: submit)
+    }
+
+    private static func matchesLabel(_ element: AXUIElement, in labels: Set<String>) -> Bool {
+        let punctuation = CharacterSet(charactersIn: ".…⋯ \n\t")
+        return [kAXTitleAttribute, kAXDescriptionAttribute].contains { attribute in
+            guard let text = AX.string(element, attribute) else { return false }
+            return labels.contains(text.lowercased().trimmingCharacters(in: punctuation))
+        }
+    }
+
+    private static func isPasswordsLockedHeading(_ element: AXUIElement) -> Bool {
+        guard AX.role(element) == kAXStaticTextRole as String else { return false }
+        return [kAXValueAttribute, kAXTitleAttribute, kAXDescriptionAttribute].contains { attribute in
+            guard let text = AX.string(element, attribute) else { return false }
+            let heading = text.lowercased().components(separatedBy: headingSeparators).joined()
+            return passwordsLockedHeadings.contains(where: heading.hasPrefix)
+        }
+    }
+
+    private func fill(_ target: Target, approved: Prompt) {
+        busy = true
+        guard canFill, let prompt = Self.currentPrompt(for: target), prompt.matches(approved) else {
+            finish("认证窗口已变化，未填写")
+            return
+        }
+        switch prompt {
+        case .password(let field, let submit):
+            prepareToWrite(field: field, submit: submit, target: target)
+        case .usePassword(let button):
+            guard AX.press(button) == .success else {
+                fail("请在系统提示中点击「使用密码」")
                 return
             }
-        } else {
-            Log.debug("AX 写值成功（焦点 err=\(focusErr.rawValue)）")
+            waitForPassword(in: target, deadline: Date().addingTimeInterval(3))
         }
-        KeychainStore.zeroString(&password)
-        usleep(250000)
-
-        submit(pid: pid, windowNumber: windowNumber, userTyped: false)
     }
 
-    /// 提交密码。userTyped=true 表示内容是用户自己敲的，我们只按按钮。
-    private func submit(pid: pid_t, windowNumber: Int, userTyped: Bool) {
-        // 幂等：同一个窗口 3 秒内不重复提交
-        let now = Date()
-        if let last = lastSubmit[windowNumber], now.timeIntervalSince(last) < 3 {
-            Log.info("该弹窗 3 秒内已提交过，跳过重复提交")
+    private func waitForPassword(in target: Target, deadline: Date) {
+        guard canFill else {
+            finish("状态已变化，未填写")
             return
         }
-        lastSubmit[windowNumber] = now
-
-        ConfirmPanel.shared.updateStatus(userTyped ? "正在提交你输入的内容…" : "正在提交…")
-
-        // 只在目标窗口的 AX 子树里找按钮，避免多窗口时按错
-        var buttons: [String] = []
-        if let win = AX.authWindow(pid: pid) {
-            buttons = AX.buttons(in: win).map { $0.label }
+        if let prompt = Self.currentPrompt(for: target), case .password(let field, let submit) = prompt {
+            handled.append((target, prompt))
+            prepareToWrite(field: field, submit: submit, target: target)
+            return
         }
-        Log.debug("弹窗按钮: \(buttons.prefix(12).joined(separator: " / "))")
-
-        var pressed: String? = nil
-        for label in Self.submitLabels where buttons.contains(label) {
-            if AX.pressButton(pid: pid, label: label) { pressed = label; break }
+        guard Date() < deadline else {
+            fail("未能确认切换后的密码框")
+            return
         }
-        if let l = pressed {
-            Log.info("已点击「\(l)」，等待验证")
-        } else if userTyped {
-            // 用户输入的内容不代按 Return，避免和他自己的操作打架
-            Log.warn("没找到提交按钮，也未按 Return（内容是你输入的）")
-        } else {
-            Log.warn("没有匹配到提交按钮，改用 Return")
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { [weak self] in
+            self?.waitForPassword(in: target, deadline: deadline)
+        }
+    }
+
+    private func prepareToWrite(field: AXUIElement, submit: AXUIElement?, target: Target) {
+        guard target.host == .passwords, submit == nil else {
+            writePassword(to: field, submit: submit, target: target)
+            return
+        }
+
+        // 独立锁定页用回车提交。确认浮窗刚获得焦点，先把焦点还给该安全输入框。
+        if let app = NSRunningApplication(processIdentifier: target.pid) {
+            NSApp.yieldActivation(to: app)
+            app.activate(from: .current, options: [])
+        }
+        waitForFocus(on: field, in: target, deadline: Date().addingTimeInterval(1))
+    }
+
+    private func waitForFocus(on field: AXUIElement, in target: Target, deadline: Date) {
+        guard canFill, let prompt = Self.currentPrompt(for: target),
+              prompt.matches(.password(field: field, submit: nil)) else {
+            finish("认证窗口已变化，未填写")
+            return
+        }
+        if Self.isFocused(field) {
+            writePassword(to: field, submit: nil, target: target)
+            return
+        }
+        guard Date() < deadline else {
+            fail("无法聚焦「密码」App 的解锁框，请手动输入")
+            return
+        }
+        AX.focus(field)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in
+            self?.waitForFocus(on: field, in: target, deadline: deadline)
+        }
+    }
+
+    private func writePassword(to field: AXUIElement, submit: AXUIElement?, target: Target) {
+        let userTyped = AX.fieldHasText(field)
+        if !userTyped {
+            guard var password = KeychainStore.shared.load(), !password.isEmpty else {
+                finish("请先设置登录密码")
+                return
+            }
+            defer { KeychainStore.zeroString(&password) }
+
+            if AX.setValue(field, password) != .success {
+                AX.focus(field)
+                guard Injector.shared.typeText(password, perCharDelayMS: 12, whileFocused: {
+                    Self.isFocused(field)
+                }) else {
+                    fail("无法写入这个认证窗口，请手动输入")
+                    return
+                }
+            }
+        }
+
+        let pressed = submit.map { AX.press($0) == .success } ?? false
+        if !pressed {
+            guard !userTyped, Self.isFocused(field) else {
+                finish(userTyped ? "请在系统窗口中提交" : "已填写，请在系统窗口中提交")
+                return
+            }
             Injector.shared.pressReturn()
         }
-
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { [weak self] in
-            self?.verify(windowNumber: windowNumber, attempts: 8)
-        }
+        ConfirmPanel.shared.updateStatus("等待系统验证…")
+        verifySubmission(in: target, field: field, deadline: Date().addingTimeInterval(4))
     }
 
-    /// 注入前的安全校验：焦点必须真的在这个弹窗的密码框上
-    private static func canTypeSafely(pid: pid_t) -> Bool {
-        guard let f = AX.focusedElement() else { return false }
-        return AX.pidOf(f) == pid
-            && AX.role(f) == "AXTextField"
-            && AX.subrole(f) == "AXSecureTextField"
+    private static func isFocused(_ field: AXUIElement) -> Bool {
+        guard let focused = AX.focusedElement() else { return false }
+        return CFEqual(field, focused)
     }
 
-    static func windowExists(_ number: Int) -> Bool {
-        guard let list = CGWindowListCopyWindowInfo([.optionOnScreenOnly], kCGNullWindowID)
-                as? [[String: Any]] else { return false }
-        return list.contains { ($0[kCGWindowNumber as String] as? Int) == number }
-    }
-
-    private func verify(windowNumber: Int, attempts: Int) {
-        if !authMainWindows().contains(where: { $0.number == windowNumber }) {
-            Log.info("自动填写成功 ✅")
-            busy = false
-            ConfirmPanel.shared.updateStatus("已填写")
-            ConfirmPanel.shared.finish(after: 1.0)
+    private func verifySubmission(in target: Target, field: AXUIElement, deadline: Date) {
+        guard case .password(let current, _)? = Self.currentPrompt(for: target), CFEqual(field, current) else {
+            finish("已提交")
             return
         }
-        guard attempts > 0 else {
-            Log.error("自动填写失败：弹窗仍在（密码可能不正确）")
-            ConfirmPanel.shared.updateStatus("密码可能不正确")
-            ConfirmPanel.shared.finish(after: 1.4)
-            fail(windowNumber: windowNumber, reason: "密码可能不正确")
+        guard Date() < deadline else {
+            fail("认证窗口仍在，请检查密码或手动完成")
             return
         }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { [weak self] in
-            self?.verify(windowNumber: windowNumber, attempts: attempts - 1)
+            self?.verifySubmission(in: target, field: field, deadline: deadline)
         }
     }
 
-    private func findField(pid: pid_t, deadline: Date) -> AXUIElement? {
-        while Date() < deadline {
-            let fields = AX.secureFields(pid: pid)
-            if let f = fields.first(where: { AX.isFocused($0) }) ?? fields.first {
-                return f
-            }
-            usleep(150000)
-        }
-        return nil
-    }
-
-    /// Touch ID 界面上点「使用密码…」
-    private func pressUsePassword(pid: pid_t) -> Bool {
-        let candidates = AX.buttons(pid: pid)
-        for (el, label) in candidates {
-            let l = label.lowercased()
-            if l.contains("use password") || l.contains("使用密码") || l.contains("输入密码") {
-                Log.info("点击「\(label)」切换到密码输入")
-                if AX.press(el) == .success {
-                    return true
-                }
-            }
-        }
-        return false
-    }
-
-    private func fail(windowNumber: Int, reason: String) {
+    private func finish(_ status: String) {
         busy = false
+        ConfirmPanel.shared.updateStatus(status)
+        ConfirmPanel.shared.finish()
+    }
+
+    private func fail(_ reason: String) {
         cooldownUntil = Date().addingTimeInterval(Settings.shared.authCooldown)
-        Log.error("授权弹窗填写终止：\(reason)。冷却 \(Int(Settings.shared.authCooldown)) 秒。")
-        Notifier.post(title: "自动填写失败", body: reason)
-        ConfirmPanel.shared.updateStatus("未能填写")
-        ConfirmPanel.shared.finish(after: 1.4)
+        Log.warn("授权弹窗填写终止：\(reason)")
+        finish(reason)
     }
 }

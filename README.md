@@ -75,7 +75,7 @@ NearbyPass --dump-diagnostics > report.txt
 
 **判断在场**：CoreBluetooth 扫描 BLE 广播，对指定设备做 RSSI 指数平滑，配合双阈值和迟滞带。手机广播间隔本身就有 10 到 20 秒，所以判定窗口给得比较宽。
 
-**找密码弹窗**：`CGWindowListCopyWindowInfo` 轮询桌面窗口，认出系统认证弹窗（`SecurityAgent`、`coreautha`，还有挂在系统设置上的 sheet）。拿到之后通过 Accessibility 直接往密码框写值，再按「好」或「修改设置」提交。
+**找密码弹窗**：NearbyPass 枚举可见窗口，通过辅助功能 API 识别系统授权、系统设置及 macOS「密码」App 的锁定页。检测到设备在场后，先请你点击「允许」。如果系统先显示 Touch ID，会尝试通过同一提示的「使用密码」切换。「密码」App 的锁定页只有密码框时，NearbyPass 会在确认焦点后按回车提交。
 
 **自动解锁**：锁屏后 `loginwindow` 的密码框是标准 AX 元素，同样是 AX 写值 + 点 `login` 按钮。如果屏保挡在前面，先合成一次 Shift 把它退掉。
 

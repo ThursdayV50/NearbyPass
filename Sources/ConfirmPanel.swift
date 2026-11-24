@@ -58,21 +58,24 @@ final class ConfirmPanel {
     private var statusLabel: NSTextField?
     private var watch: Timer?
     private var submitted = false
-    private var targetWindow = 0
+    private var isTargetActive: (() -> Bool)?
     private var sessionID = 0
     private var allowButton: NSButton?
     private var cancelButton: NSButton?
 
     private init() {}
 
+    var isPresenting: Bool { panel != nil }
+
     /// 显示确认浮窗。用户点「允许」才执行 onAllow；
     /// 点「取消」或倒计时结束则放弃（默认 seconds=20 秒后自动取消）。
     func show(
         device: String,
         rssi: Int,
+        reason: String,
         seconds: Int = 20,
         anchor: CGRect? = nil,
-        windowNumber: Int = 0,
+        isTargetActive: @escaping () -> Bool,
         onAllow: @escaping () -> Void
     ) {
         sessionID += 1
@@ -80,7 +83,7 @@ final class ConfirmPanel {
         close()
         finished = false
         submitted = false
-        targetWindow = windowNumber
+        self.isTargetActive = isTargetActive
         self.onAllow = onAllow
         self.remaining = max(3, seconds)
 
@@ -161,7 +164,7 @@ final class ConfirmPanel {
         title.lineBreakMode = .byTruncatingTail
         title.frame = NSRect(x: titleX, y: h - 24 - 22, width: titleW, height: 22)
 
-        let hint = NSTextField(labelWithString: "为这次系统授权自动填入登录密码")
+        let hint = NSTextField(labelWithString: reason)
         hint.font = .systemFont(ofSize: 11.5, weight: .regular)
         hint.textColor = .secondaryLabelColor
         hint.lineBreakMode = .byTruncatingTail
@@ -322,31 +325,15 @@ final class ConfirmPanel {
     }
 
     private func checkTarget() {
-        guard targetWindow > 0, !finished else { return }
-        let stillThere = Self.windowExists(targetWindow)
-        if !stillThere {
-            watch?.invalidate()
-            watch = nil
-            if submitted {
-                // 我们自己提交过，按正常验证流程走
-                return
-            }
-            countdown?.invalidate()
-            countdown = nil
-            countLabel?.stringValue = ""
-            statusLabel?.stringValue = "你已完成，未做操作"
-            Log.info("目标弹窗已消失（用户手动完成），浮窗自动关闭")
-            finish(after: 0.9)
-        }
-    }
-
-    private static func windowExists(_ number: Int) -> Bool {
-        guard let list = CGWindowListCopyWindowInfo([.optionOnScreenOnly], kCGNullWindowID)
-                as? [[String: Any]] else { return false }
-        for w in list {
-            if let n = w[kCGWindowNumber as String] as? Int, n == number { return true }
-        }
-        return false
+        guard !finished, !submitted, isTargetActive?() == false else { return }
+        finished = true
+        watch?.invalidate()
+        watch = nil
+        countdown?.invalidate()
+        countdown = nil
+        countLabel?.stringValue = ""
+        statusLabel?.stringValue = "认证提示已关闭"
+        finish(after: 0.9)
     }
 
     @objc private func cancelTapped() {
@@ -361,6 +348,8 @@ final class ConfirmPanel {
         countdown = nil
         watch?.invalidate()
         watch = nil
+        onAllow = nil
+        isTargetActive = nil
         allowButton = nil
         cancelButton = nil
         statusLabel = nil

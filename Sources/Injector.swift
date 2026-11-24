@@ -29,10 +29,11 @@ final class Injector {
 
     /// 逐字符输入。返回是否全部投递成功。
     @discardableResult
-    func typeText(_ text: String, perCharDelayMS: Int = 8) -> Bool {
+    func typeText(_ text: String, perCharDelayMS: Int = 8, whileFocused: () -> Bool = { true }) -> Bool {
         var ok = true
         let delay = useconds_t(max(0, perCharDelayMS) * 1000)
         for ch in text {
+            guard whileFocused() else { return false }
             if mode == .keycode, let code = Injector.keyCode(for: ch) {
                 ok = postKey(code) && ok
             } else {
